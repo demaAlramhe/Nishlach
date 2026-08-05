@@ -53,6 +53,8 @@ export function OrderForm() {
       customer_name: "",
       customer_phone: "",
       pickup_location: "",
+      pickup_lat: undefined,
+      pickup_lng: undefined,
       tracking_number: "",
       proof_image_url: "",
       dropoff_address: "",
@@ -78,10 +80,12 @@ export function OrderForm() {
     formState: { errors },
   } = form;
 
-  const pickupLocation = watch("pickup_location");
+  const pickupLat = watch("pickup_lat");
+  const pickupLng = watch("pickup_lng");
   const dropoffLat = watch("dropoff_lat");
   const dropoffLng = watch("dropoff_lng");
   const addressSelected = dropoffLat != null && dropoffLng != null;
+  const pickupSelected = pickupLat != null && pickupLng != null;
   const formLocked = serviceAvailable === false;
 
   const checkServiceArea = useCallback(
@@ -123,7 +127,25 @@ export function OrderForm() {
     [setValue]
   );
 
-  const onAddressSelected = useCallback(
+  const onPickupSelected = useCallback(
+    (selected: SelectedAddress | null) => {
+      if (!selected) {
+        setValue("pickup_lat", undefined as unknown as number);
+        setValue("pickup_lng", undefined as unknown as number);
+        setPricing(null);
+        setValue("distance_km", null);
+        setValue("price", null);
+        return;
+      }
+
+      setValue("pickup_location", selected.address, { shouldValidate: true });
+      setValue("pickup_lat", selected.lat, { shouldValidate: true });
+      setValue("pickup_lng", selected.lng, { shouldValidate: true });
+    },
+    [setValue]
+  );
+
+  const onDropoffSelected = useCallback(
     async (selected: SelectedAddress | null) => {
       if (!selected) {
         setSelectedCity(null);
@@ -155,7 +177,8 @@ export function OrderForm() {
       serviceAvailable !== true ||
       dropoffLat == null ||
       dropoffLng == null ||
-      !pickupLocation?.trim()
+      pickupLat == null ||
+      pickupLng == null
     ) {
       return;
     }
@@ -167,7 +190,12 @@ export function OrderForm() {
         const res = await fetch("/api/pricing", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ lat: dropoffLat, lng: dropoffLng }),
+          body: JSON.stringify({
+            origin_lat: pickupLat,
+            origin_lng: pickupLng,
+            dest_lat: dropoffLat,
+            dest_lng: dropoffLng,
+          }),
         });
         const data = (await res.json()) as PricingState & { error?: string };
         if (cancelled) return;
@@ -197,7 +225,14 @@ export function OrderForm() {
     return () => {
       cancelled = true;
     };
-  }, [serviceAvailable, dropoffLat, dropoffLng, pickupLocation, setValue]);
+  }, [
+    serviceAvailable,
+    dropoffLat,
+    dropoffLng,
+    pickupLat,
+    pickupLng,
+    setValue,
+  ]);
 
   const onSubmit = (values: OrderFormValues) => {
     setSubmitError(null);
@@ -303,24 +338,26 @@ export function OrderForm() {
             )}
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="pickup_location" className={labelClass}>
-              מאיפה לאסוף <span className="text-brand-error">*</span>
-            </Label>
-            <Input
-              id="pickup_location"
-              placeholder="סניף דואר / שם החנות"
-              className={fieldClass}
-              aria-invalid={Boolean(errors.pickup_location)}
-              suppressHydrationWarning
-              {...register("pickup_location")}
-            />
-            {errors.pickup_location && (
-              <p className="text-sm text-brand-error">
-                {errors.pickup_location.message}
-              </p>
+          <Controller
+            name="pickup_location"
+            control={control}
+            render={({ field, fieldState }) => (
+              <AddressAutocomplete
+                value={field.value ?? ""}
+                onChange={field.onChange}
+                onAddressSelected={onPickupSelected}
+                checkServiceArea={false}
+                inputId="pickup_location"
+                label="מאיפה לאסוף"
+                placeholder="סניף דואר / שם החנות..."
+                error={
+                  fieldState.error?.message ||
+                  errors.pickup_lat?.message ||
+                  errors.pickup_lng?.message
+                }
+              />
             )}
-          </div>
+          />
 
           <div className="space-y-2">
             <Label htmlFor="tracking_number" className={labelClass}>
@@ -349,10 +386,13 @@ export function OrderForm() {
               <AddressAutocomplete
                 value={field.value ?? ""}
                 onChange={field.onChange}
-                onAddressSelected={onAddressSelected}
+                onAddressSelected={onDropoffSelected}
+                checkServiceArea
                 serviceAvailable={serviceAvailable}
                 checkingService={checkingService}
                 cityName={selectedCity}
+                inputId="dropoff_address"
+                label="כתובת למשלוח"
                 error={
                   fieldState.error?.message ||
                   errors.dropoff_city?.message ||
@@ -444,13 +484,13 @@ export function OrderForm() {
               <p className="mt-1 text-3xl font-bold tracking-tight text-brand-dark">
                 ₪{pricing.price}
               </p>
-            ) : serviceAvailable === true && pickupLocation?.trim() ? (
+            ) : serviceAvailable === true && pickupSelected ? (
               <p className="mt-1 text-lg font-semibold text-brand-dark">
                 מחיר: יחושב ידנית
               </p>
             ) : (
               <p className="mt-1 text-base text-brand-muted">
-                בחרו כתובת ומלאו מאיפה לאסוף כדי לחשב מחיר
+                בחרו נקודת איסוף וכתובת למשלוח כדי לחשב מחיר
               </p>
             )}
             {pricing?.distance_km != null && (

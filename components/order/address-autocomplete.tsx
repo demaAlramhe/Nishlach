@@ -35,16 +35,21 @@ export type SelectedAddress = {
 };
 
 type AddressAutocompleteProps = {
-  /** Form field value (synced when a place is chosen, or cleared). */
   value: string;
-  /** Update the react-hook-form text field without remounting Maps widgets. */
   onChange: (value: string) => void;
   onAddressSelected: (address: SelectedAddress | null) => void;
-  serviceAvailable: boolean | null;
-  checkingService: boolean;
+  /** When false, skip service-area UI/checks (pickup). Default true. */
+  checkServiceArea?: boolean;
+  serviceAvailable?: boolean | null;
+  checkingService?: boolean;
   cityName?: string | null;
   disabled?: boolean;
   error?: string;
+  inputId?: string;
+  label?: string;
+  placeholder?: string;
+  required?: boolean;
+  showGeolocation?: boolean;
 };
 
 type PlaceLike = {
@@ -67,11 +72,17 @@ function AddressAutocompleteComponent({
   value,
   onChange,
   onAddressSelected,
-  serviceAvailable,
-  checkingService,
+  checkServiceArea = true,
+  serviceAvailable = null,
+  checkingService = false,
   cityName,
   disabled,
   error,
+  inputId = "dropoff_address",
+  label = "כתובת למשלוח",
+  placeholder = "הקלידו כתובת בישראל...",
+  required = true,
+  showGeolocation = true,
 }: AddressAutocompleteProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
   const { isLoaded, loadError } = useJsApiLoader({
@@ -91,8 +102,8 @@ function AddressAutocompleteComponent({
   const hadSelectionRef = useRef(false);
   const onChangeRef = useRef(onChange);
   const onAddressSelectedRef = useRef(onAddressSelected);
+  const checkServiceAreaRef = useRef(checkServiceArea);
 
-  // Local text so typing never remounts Google Autocomplete bindings
   const [text, setText] = useState(value);
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
@@ -100,9 +111,9 @@ function AddressAutocompleteComponent({
   useEffect(() => {
     onChangeRef.current = onChange;
     onAddressSelectedRef.current = onAddressSelected;
-  }, [onChange, onAddressSelected]);
+    checkServiceAreaRef.current = checkServiceArea;
+  }, [onChange, onAddressSelected, checkServiceArea]);
 
-  // Sync inward only when parent sets a selected address (or clears externally)
   useEffect(() => {
     setText(value);
   }, [value]);
@@ -121,20 +132,14 @@ function AddressAutocompleteComponent({
       place.address_components,
       address
     );
-    const city = extractCityFromComponents(place.address_components, address);
+    const city =
+      extractCityFromComponents(place.address_components, address) ?? "";
 
     // TEMP: verify Google Hebrew city extraction — remove once confirmed
     console.log("Extracted city:", city);
     console.log("City candidates:", cityCandidates);
-    console.log(
-      "address_components:",
-      place.address_components?.map((c) => ({
-        long_name: c.long_name,
-        types: c.types,
-      }))
-    );
 
-    if (!city) {
+    if (checkServiceAreaRef.current && !city) {
       hadSelectionRef.current = false;
       onAddressSelectedRef.current(null);
       setGeoError("לא הצלחנו לזהות את העיר מהכתובת. נסו לבחור כתובת אחרת.");
@@ -181,7 +186,6 @@ function AddressAutocompleteComponent({
     [applyPlace]
   );
 
-  // Bind Autocomplete once to a stable <input> — avoid <Autocomplete> React wrapper remounts
   useEffect(() => {
     if (!isLoaded || !inputRef.current || autocompleteRef.current) return;
     if (!window.google?.maps?.places) return;
@@ -217,7 +221,6 @@ function AddressAutocompleteComponent({
     setText(next);
     onChangeRef.current(next);
 
-    // Clear selection only once when user edits after picking a place
     if (hadSelectionRef.current) {
       hadSelectionRef.current = false;
       onAddressSelectedRef.current(null);
@@ -276,8 +279,9 @@ function AddressAutocompleteComponent({
 
   return (
     <div className="space-y-2">
-      <Label htmlFor="dropoff_address" className="text-base text-brand-dark">
-        כתובת למשלוח <span className="text-brand-error">*</span>
+      <Label htmlFor={inputId} className="text-base text-brand-dark">
+        {label}
+        {required && <span className="text-brand-error"> *</span>}
       </Label>
 
       <div ref={placesHostRef} className="hidden" aria-hidden />
@@ -289,15 +293,14 @@ function AddressAutocompleteComponent({
         </div>
       ) : null}
 
-      {/* Keep the input mounted once maps are ready; never wrap in remounting Autocomplete */}
       <input
         ref={inputRef}
-        id="dropoff_address"
+        id={inputId}
         type="text"
         value={text}
         disabled={disabled || !isLoaded}
         onChange={onInputChange}
-        placeholder="הקלידו כתובת בישראל..."
+        placeholder={placeholder}
         className={cn(
           "h-12 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive",
           !isLoaded && "hidden"
@@ -307,35 +310,37 @@ function AddressAutocompleteComponent({
         suppressHydrationWarning
       />
 
-      <Button
-        type="button"
-        variant="outline"
-        disabled={disabled || geoLoading || !isLoaded}
-        onClick={useCurrentLocation}
-        className="h-11 w-full justify-center gap-2 text-sm sm:w-auto"
-      >
-        {geoLoading ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : (
-          <MapPin className="size-4" />
-        )}
-        📍 השתמש במיקום הנוכחי שלי
-      </Button>
+      {showGeolocation && (
+        <Button
+          type="button"
+          variant="outline"
+          disabled={disabled || geoLoading || !isLoaded}
+          onClick={useCurrentLocation}
+          className="h-11 w-full justify-center gap-2 text-sm sm:w-auto"
+        >
+          {geoLoading ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <MapPin className="size-4" />
+          )}
+          📍 השתמש במיקום הנוכחי שלי
+        </Button>
+      )}
 
-      {checkingService && (
+      {checkServiceArea && checkingService && (
         <p className="flex items-center gap-2 text-sm text-brand-muted">
           <Loader2 className="size-3.5 animate-spin" />
           בודקים זמינות באזור...
         </p>
       )}
 
-      {serviceAvailable === true && (
+      {checkServiceArea && serviceAvailable === true && (
         <p className={cn("text-sm font-medium text-brand-success")}>
           ✓ הכתובת באזור השירות
         </p>
       )}
 
-      {serviceAvailable === false && text && (
+      {checkServiceArea && serviceAvailable === false && text && (
         <Alert
           variant="destructive"
           className="border-brand-error/40 bg-brand-error/5"

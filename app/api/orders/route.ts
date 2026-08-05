@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { PICKUP_ORIGIN } from "@/lib/constants";
 import { emptyToNull } from "@/lib/geo";
 import {
   findPriceForDistance,
@@ -40,19 +39,31 @@ export async function POST(request: Request) {
       );
     }
 
-    // Prefer canonical DB city name when matched
     const dropoffCity = matchedCity ?? input.dropoff_city;
 
+    console.log("[orders] pricing coords:", {
+      origin_lat: input.pickup_lat,
+      origin_lng: input.pickup_lng,
+      dest_lat: input.dropoff_lat,
+      dest_lng: input.dropoff_lng,
+    });
+
     const distanceKm =
-      (await getDrivingDistanceKm(PICKUP_ORIGIN, {
-        lat: input.dropoff_lat,
-        lng: input.dropoff_lng,
-      })) ?? input.distance_km ?? null;
+      (await getDrivingDistanceKm(
+        { lat: input.pickup_lat, lng: input.pickup_lng },
+        { lat: input.dropoff_lat, lng: input.dropoff_lng }
+      )) ??
+      input.distance_km ??
+      null;
+
+    console.log("[orders] distance_km:", distanceKm);
 
     const price =
       distanceKm != null
         ? await findPriceForDistance(distanceKm)
         : input.price ?? null;
+
+    console.log("[orders] price:", price);
 
     const supabase = await createClient();
 
@@ -75,6 +86,8 @@ export async function POST(request: Request) {
         customer_name: input.customer_name,
         customer_phone: input.customer_phone,
         pickup_location: input.pickup_location,
+        pickup_lat: input.pickup_lat,
+        pickup_lng: input.pickup_lng,
         tracking_number: emptyToNull(input.tracking_number),
         proof_image_url: emptyToNull(input.proof_image_url),
         dropoff_address: input.dropoff_address,

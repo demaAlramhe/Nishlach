@@ -20,6 +20,8 @@ create table orders (
   customer_phone text not null,
   pickup_location text not null,
   pickup_address text,
+  pickup_lat numeric,
+  pickup_lng numeric,
   tracking_number text,
   proof_image_url text,
   dropoff_address text not null,

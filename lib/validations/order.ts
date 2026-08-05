@@ -14,7 +14,9 @@ export const orderFormSchema = z.object({
   pickup_location: z
     .string()
     .trim()
-    .min(2, "נא לציין מאיפה לאסוף"),
+    .min(3, "נא לבחור נקודת איסוף מהרשימה"),
+  pickup_lat: z.number({ error: "נא לבחור נקודת איסוף מהרשימה" }),
+  pickup_lng: z.number({ error: "נא לבחור נקודת איסוף מהרשימה" }),
   tracking_number: z.string().trim().optional().or(z.literal("")),
   proof_image_url: z.string().url().optional().or(z.literal("")),
   dropoff_address: z
