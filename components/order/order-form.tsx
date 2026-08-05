@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
-import { useForm } from "react-hook-form";
+import { Controller, useForm } from "react-hook-form";
 import {
   AddressAutocomplete,
   type SelectedAddress,
@@ -45,6 +45,7 @@ export function OrderForm() {
   const [pricing, setPricing] = useState<PricingState | null>(null);
   const [pricingLoading, setPricingLoading] = useState(false);
   const [selectedCity, setSelectedCity] = useState<string | null>(null);
+  const [cityCandidates, setCityCandidates] = useState<string[]>([]);
 
   const form = useForm<OrderFormValues>({
     resolver: zodResolver(orderFormSchema),
@@ -70,67 +71,84 @@ export function OrderForm() {
 
   const {
     register,
+    control,
     handleSubmit,
     setValue,
     watch,
     formState: { errors },
   } = form;
 
-  const dropoffAddress = watch("dropoff_address");
   const pickupLocation = watch("pickup_location");
   const dropoffLat = watch("dropoff_lat");
   const dropoffLng = watch("dropoff_lng");
-  const addressSelected =
-    Boolean(dropoffLat) && Boolean(dropoffLng) && Boolean(dropoffAddress);
+  const addressSelected = dropoffLat != null && dropoffLng != null;
   const formLocked = serviceAvailable === false;
 
-  const checkServiceArea = async (city: string) => {
-    setCheckingService(true);
-    setServiceAvailable(null);
-    try {
-      const res = await fetch("/api/service-area", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ city_name: city }),
-      });
-      const data = (await res.json()) as { available?: boolean };
-      const available = Boolean(data.available);
-      setServiceAvailable(available);
-      if (!available) {
+  const checkServiceArea = useCallback(
+    async (city: string, candidates: string[] = []) => {
+      setCheckingService(true);
+      setServiceAvailable(null);
+      try {
+        const res = await fetch("/api/service-area", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            city_name: city,
+            city_candidates: candidates,
+          }),
+        });
+        const data = (await res.json()) as {
+          available?: boolean;
+          matched_city?: string | null;
+        };
+        const available = Boolean(data.available);
+        setServiceAvailable(available);
+        if (available && data.matched_city) {
+          setSelectedCity(data.matched_city);
+          setValue("dropoff_city", data.matched_city, { shouldValidate: true });
+        }
+        if (!available) {
+          setPricing(null);
+          setValue("distance_km", null);
+          setValue("price", null);
+        }
+        return available;
+      } catch {
+        setServiceAvailable(false);
+        return false;
+      } finally {
+        setCheckingService(false);
+      }
+    },
+    [setValue]
+  );
+
+  const onAddressSelected = useCallback(
+    async (selected: SelectedAddress | null) => {
+      if (!selected) {
+        setSelectedCity(null);
+        setCityCandidates([]);
+        setServiceAvailable(null);
         setPricing(null);
+        setValue("dropoff_city", "");
+        setValue("dropoff_lat", undefined as unknown as number);
+        setValue("dropoff_lng", undefined as unknown as number);
         setValue("distance_km", null);
         setValue("price", null);
+        return;
       }
-      return available;
-    } catch {
-      setServiceAvailable(false);
-      return false;
-    } finally {
-      setCheckingService(false);
-    }
-  };
 
-  const onAddressSelected = async (selected: SelectedAddress | null) => {
-    if (!selected) {
-      setSelectedCity(null);
-      setServiceAvailable(null);
-      setPricing(null);
-      setValue("dropoff_city", "");
-      setValue("dropoff_lat", undefined as unknown as number);
-      setValue("dropoff_lng", undefined as unknown as number);
-      setValue("distance_km", null);
-      setValue("price", null);
-      return;
-    }
+      setSelectedCity(selected.city);
+      setCityCandidates(selected.cityCandidates);
+      setValue("dropoff_address", selected.address, { shouldValidate: true });
+      setValue("dropoff_city", selected.city, { shouldValidate: true });
+      setValue("dropoff_lat", selected.lat, { shouldValidate: true });
+      setValue("dropoff_lng", selected.lng, { shouldValidate: true });
 
-    setSelectedCity(selected.city);
-    setValue("dropoff_address", selected.address, { shouldValidate: true });
-    setValue("dropoff_city", selected.city, { shouldValidate: true });
-    setValue("dropoff_lat", selected.lat, { shouldValidate: true });
-    setValue("dropoff_lng", selected.lng, { shouldValidate: true });
-
-    await checkServiceArea(selected.city);
-  };
+      await checkServiceArea(selected.city, selected.cityCandidates);
+    },
+    [checkServiceArea, setValue]
+  );
 
   useEffect(() => {
     if (
@@ -201,6 +219,7 @@ export function OrderForm() {
           body: JSON.stringify({
             ...values,
             service_area_ok: true,
+            city_candidates: cityCandidates,
           }),
         });
         const data = (await res.json()) as {
@@ -252,6 +271,7 @@ export function OrderForm() {
               className={fieldClass}
               autoComplete="name"
               aria-invalid={Boolean(errors.customer_name)}
+              suppressHydrationWarning
               {...register("customer_name")}
             />
             {errors.customer_name && (
@@ -273,6 +293,7 @@ export function OrderForm() {
               className={fieldClass}
               autoComplete="tel"
               aria-invalid={Boolean(errors.customer_phone)}
+              suppressHydrationWarning
               {...register("customer_phone")}
             />
             {errors.customer_phone && (
@@ -291,6 +312,7 @@ export function OrderForm() {
               placeholder="סניף דואר / שם החנות"
               className={fieldClass}
               aria-invalid={Boolean(errors.pickup_location)}
+              suppressHydrationWarning
               {...register("pickup_location")}
             />
             {errors.pickup_location && (
@@ -308,6 +330,7 @@ export function OrderForm() {
             <Input
               id="tracking_number"
               className={fieldClass}
+              suppressHydrationWarning
               {...register("tracking_number")}
             />
           </div>
@@ -319,27 +342,30 @@ export function OrderForm() {
             }
           />
 
-          <AddressAutocomplete
-            value={dropoffAddress || ""}
-            onChange={(v) => setValue("dropoff_address", v)}
-            onAddressSelected={onAddressSelected}
-            serviceAvailable={serviceAvailable}
-            checkingService={checkingService}
-            cityName={selectedCity}
-            error={
-              errors.dropoff_address?.message ||
-              errors.dropoff_city?.message ||
-              errors.dropoff_lat?.message
-            }
+          <Controller
+            name="dropoff_address"
+            control={control}
+            render={({ field, fieldState }) => (
+              <AddressAutocomplete
+                value={field.value ?? ""}
+                onChange={field.onChange}
+                onAddressSelected={onAddressSelected}
+                serviceAvailable={serviceAvailable}
+                checkingService={checkingService}
+                cityName={selectedCity}
+                error={
+                  fieldState.error?.message ||
+                  errors.dropoff_city?.message ||
+                  errors.dropoff_lat?.message
+                }
+              />
+            )}
           />
 
           {addressSelected && (
             <fieldset
               disabled={formLocked}
-              className={cn(
-                "flex flex-col gap-5",
-                formLocked && "opacity-50"
-              )}
+              className={cn("flex flex-col gap-5", formLocked && "opacity-50")}
             >
               <div className="space-y-2">
                 <Label htmlFor="house_number" className={labelClass}>
@@ -351,6 +377,8 @@ export function OrderForm() {
                 <Input
                   id="house_number"
                   className={fieldClass}
+                  autoComplete="off"
+                  suppressHydrationWarning
                   {...register("house_number")}
                 />
               </div>
@@ -365,6 +393,8 @@ export function OrderForm() {
                 <Input
                   id="entrance_number"
                   className={fieldClass}
+                  autoComplete="off"
+                  suppressHydrationWarning
                   {...register("entrance_number")}
                 />
               </div>
@@ -379,6 +409,8 @@ export function OrderForm() {
                 <Input
                   id="entry_code"
                   className={fieldClass}
+                  autoComplete="off"
+                  suppressHydrationWarning
                   {...register("entry_code")}
                 />
               </div>
@@ -394,6 +426,7 @@ export function OrderForm() {
                   id="note"
                   rows={3}
                   className="min-h-24 resize-y text-base"
+                  suppressHydrationWarning
                   {...register("note")}
                 />
               </div>

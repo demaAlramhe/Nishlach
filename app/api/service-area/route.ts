@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient } from "@/lib/supabase/server";
+import { isActiveServiceArea } from "@/lib/orders/server";
 
 const bodySchema = z.object({
   city_name: z.string().trim().min(1),
+  city_candidates: z.array(z.string().trim().min(1)).optional(),
 });
 
 export async function POST(request: Request) {
@@ -15,22 +16,15 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "עיר חסרה" }, { status: 400 });
     }
 
-    const supabase = await createClient();
-    const { data, error } = await supabase
-      .from("service_areas")
-      .select("id, city_name")
-      .eq("city_name", parsed.data.city_name)
-      .eq("is_active", true)
-      .maybeSingle();
-
-    if (error) {
-      console.error("service area check failed", error);
-      return NextResponse.json({ error: "שגיאה בבדיקת אזור" }, { status: 500 });
-    }
+    const { available, matchedCity } = await isActiveServiceArea(
+      parsed.data.city_name,
+      parsed.data.city_candidates ?? []
+    );
 
     return NextResponse.json({
-      available: Boolean(data),
+      available,
       city_name: parsed.data.city_name,
+      matched_city: matchedCity,
     });
   } catch (error) {
     console.error("POST /api/service-area", error);

@@ -24,8 +24,9 @@ export default function RootLayout({
       lang="he"
       dir="rtl"
       className={`${notoSansHebrew.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
-      <body className="flex min-h-full flex-col font-sans">
+      <body className="flex min-h-full flex-col font-sans" suppressHydrationWarning>
         <DirectionProvider direction="rtl">{children}</DirectionProvider>
       </body>
     </html>

@@ -26,8 +26,11 @@ export async function POST(request: Request) {
 
     const input = parsed.data;
 
-    const inServiceArea = await isActiveServiceArea(input.dropoff_city);
-    if (!inServiceArea) {
+    const { available, matchedCity } = await isActiveServiceArea(
+      input.dropoff_city,
+      Array.isArray(body.city_candidates) ? body.city_candidates : []
+    );
+    if (!available) {
       return NextResponse.json(
         {
           error: `מצטערים, השירות עדיין לא זמין ב${input.dropoff_city} כרגע. אנחנו כרגע פועלים באזור תל אביב-יפו.`,
@@ -36,6 +39,9 @@ export async function POST(request: Request) {
         { status: 422 }
       );
     }
+
+    // Prefer canonical DB city name when matched
+    const dropoffCity = matchedCity ?? input.dropoff_city;
 
     const distanceKm =
       (await getDrivingDistanceKm(PICKUP_ORIGIN, {
@@ -72,7 +78,7 @@ export async function POST(request: Request) {
         tracking_number: emptyToNull(input.tracking_number),
         proof_image_url: emptyToNull(input.proof_image_url),
         dropoff_address: input.dropoff_address,
-        dropoff_city: input.dropoff_city,
+        dropoff_city: dropoffCity,
         house_number: emptyToNull(input.house_number),
         entrance_number: emptyToNull(input.entrance_number),
         entry_code: emptyToNull(input.entry_code),

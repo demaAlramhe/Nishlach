@@ -1,20 +1,52 @@
+import { citiesMatch } from "@/lib/geo";
 import { createClient } from "@/lib/supabase/server";
 
-export async function isActiveServiceArea(cityName: string): Promise<boolean> {
+/**
+ * Match extracted Google city name(s) against active service_areas.
+ * Uses trimmed / hyphen-normalized / case-insensitive comparison.
+ */
+export async function isActiveServiceArea(
+  cityName: string,
+  extraCandidates: string[] = []
+): Promise<{ available: boolean; matchedCity: string | null }> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("service_areas")
-    .select("id")
-    .eq("city_name", cityName)
-    .eq("is_active", true)
-    .maybeSingle();
+    .select("id, city_name")
+    .eq("is_active", true);
 
   if (error) {
     console.error("service_areas lookup failed", error);
-    return false;
+    return { available: false, matchedCity: null };
   }
 
-  return Boolean(data);
+  if (!data?.length) {
+    console.warn(
+      "[service-area] no active service_areas rows returned (check RLS / seed data)"
+    );
+    return { available: false, matchedCity: null };
+  }
+
+  const candidates = [cityName, ...extraCandidates]
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+  console.log("[service-area] candidates:", candidates);
+  console.log(
+    "[service-area] db cities:",
+    data.map((row) => row.city_name)
+  );
+
+  for (const candidate of candidates) {
+    const match = data.find((row) => citiesMatch(candidate, row.city_name));
+    if (match) {
+      console.log("[service-area] matched:", candidate, "→", match.city_name);
+      return { available: true, matchedCity: match.city_name };
+    }
+  }
+
+  console.warn("[service-area] no match for candidates", candidates);
+  return { available: false, matchedCity: null };
 }
 
 export async function findPriceForDistance(

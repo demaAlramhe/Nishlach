@@ -1,30 +1,43 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Autocomplete,
-  useJsApiLoader,
-} from "@react-google-maps/api";
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
+import { useJsApiLoader } from "@react-google-maps/api";
 import { Loader2, MapPin } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { extractCityFromComponents } from "@/lib/geo";
+import { extractCityCandidates, extractCityFromComponents } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 import type { AddressComponent } from "@/types/google-places";
 
 const libraries: ("places")[] = ["places"];
 
+const PLACE_FIELDS = [
+  "place_id",
+  "formatted_address",
+  "address_components",
+  "geometry",
+] as const;
+
 export type SelectedAddress = {
   address: string;
   city: string;
+  cityCandidates: string[];
   lat: number;
   lng: number;
 };
 
 type AddressAutocompleteProps = {
+  /** Form field value (synced when a place is chosen, or cleared). */
   value: string;
+  /** Update the react-hook-form text field without remounting Maps widgets. */
   onChange: (value: string) => void;
   onAddressSelected: (address: SelectedAddress | null) => void;
   serviceAvailable: boolean | null;
@@ -32,6 +45,13 @@ type AddressAutocompleteProps = {
   cityName?: string | null;
   disabled?: boolean;
   error?: string;
+};
+
+type PlaceLike = {
+  place_id?: string;
+  formatted_address?: string;
+  address_components?: AddressComponent[];
+  geometry?: { location?: google.maps.LatLng | google.maps.LatLngLiteral };
 };
 
 function readLatLng(location: google.maps.LatLng | google.maps.LatLngLiteral) {
@@ -43,7 +63,7 @@ function readLatLng(location: google.maps.LatLng | google.maps.LatLngLiteral) {
   return { lat: literal.lat, lng: literal.lng };
 }
 
-export function AddressAutocomplete({
+function AddressAutocompleteComponent({
   value,
   onChange,
   onAddressSelected,
@@ -55,48 +75,153 @@ export function AddressAutocomplete({
 }: AddressAutocompleteProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
   const { isLoaded, loadError } = useJsApiLoader({
+    id: "nishlach-google-maps-he",
     googleMapsApiKey: apiKey,
     libraries,
     language: "he",
     region: "IL",
   });
 
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+  const placesServiceRef = useRef<google.maps.places.PlacesService | null>(
+    null
+  );
+  const placesHostRef = useRef<HTMLDivElement | null>(null);
+  const hadSelectionRef = useRef(false);
+  const onChangeRef = useRef(onChange);
+  const onAddressSelectedRef = useRef(onAddressSelected);
+
+  // Local text so typing never remounts Google Autocomplete bindings
+  const [text, setText] = useState(value);
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
 
-  const applyPlace = useCallback(
-    (place: {
-      formatted_address?: string;
-      address_components?: AddressComponent[];
-      geometry?: { location?: google.maps.LatLng | google.maps.LatLngLiteral };
-    }) => {
-      const address = place.formatted_address;
-      const location = place.geometry?.location;
-      if (!address || !location) {
-        onAddressSelected(null);
+  useEffect(() => {
+    onChangeRef.current = onChange;
+    onAddressSelectedRef.current = onAddressSelected;
+  }, [onChange, onAddressSelected]);
+
+  // Sync inward only when parent sets a selected address (or clears externally)
+  useEffect(() => {
+    setText(value);
+  }, [value]);
+
+  const applyPlace = useCallback((place: PlaceLike) => {
+    const address = place.formatted_address;
+    const location = place.geometry?.location;
+    if (!address || !location) {
+      hadSelectionRef.current = false;
+      onAddressSelectedRef.current(null);
+      return;
+    }
+
+    const { lat, lng } = readLatLng(location);
+    const cityCandidates = extractCityCandidates(
+      place.address_components,
+      address
+    );
+    const city = extractCityFromComponents(place.address_components, address);
+
+    // TEMP: verify Google Hebrew city extraction — remove once confirmed
+    console.log("Extracted city:", city);
+    console.log("City candidates:", cityCandidates);
+    console.log(
+      "address_components:",
+      place.address_components?.map((c) => ({
+        long_name: c.long_name,
+        types: c.types,
+      }))
+    );
+
+    if (!city) {
+      hadSelectionRef.current = false;
+      onAddressSelectedRef.current(null);
+      setGeoError("לא הצלחנו לזהות את העיר מהכתובת. נסו לבחור כתובת אחרת.");
+      return;
+    }
+
+    setGeoError(null);
+    hadSelectionRef.current = true;
+    setText(address);
+    onChangeRef.current(address);
+    onAddressSelectedRef.current({
+      address,
+      city,
+      cityCandidates,
+      lat,
+      lng,
+    });
+  }, []);
+
+  const resolvePlaceDetails = useCallback(
+    (place: PlaceLike) => {
+      if (place.place_id && placesServiceRef.current) {
+        placesServiceRef.current.getDetails(
+          {
+            placeId: place.place_id,
+            fields: [...PLACE_FIELDS],
+            language: "he",
+          },
+          (details, status) => {
+            if (
+              status === google.maps.places.PlacesServiceStatus.OK &&
+              details
+            ) {
+              applyPlace(details as PlaceLike);
+              return;
+            }
+            applyPlace(place);
+          }
+        );
         return;
       }
-
-      const { lat, lng } = readLatLng(location);
-      const city = extractCityFromComponents(place.address_components);
-      if (!city) {
-        onAddressSelected(null);
-        setGeoError("לא הצלחנו לזהות את העיר מהכתובת. נסו לבחור כתובת אחרת.");
-        return;
-      }
-
-      setGeoError(null);
-      onChange(address);
-      onAddressSelected({ address, city, lat, lng });
+      applyPlace(place);
     },
-    [onAddressSelected, onChange]
+    [applyPlace]
   );
 
-  const onPlaceChanged = () => {
-    const place = autocompleteRef.current?.getPlace();
-    if (!place) return;
-    applyPlace(place as Parameters<typeof applyPlace>[0]);
+  // Bind Autocomplete once to a stable <input> — avoid <Autocomplete> React wrapper remounts
+  useEffect(() => {
+    if (!isLoaded || !inputRef.current || autocompleteRef.current) return;
+    if (!window.google?.maps?.places) return;
+
+    if (placesHostRef.current && !placesServiceRef.current) {
+      placesServiceRef.current = new google.maps.places.PlacesService(
+        placesHostRef.current
+      );
+    }
+
+    const ac = new google.maps.places.Autocomplete(inputRef.current, {
+      componentRestrictions: { country: ["il"] },
+      fields: [...PLACE_FIELDS],
+    });
+
+    const listener = ac.addListener("place_changed", () => {
+      const place = ac.getPlace();
+      if (!place) return;
+      resolvePlaceDetails(place as PlaceLike);
+    });
+
+    autocompleteRef.current = ac;
+
+    return () => {
+      listener.remove();
+      google.maps.event.clearInstanceListeners(ac);
+      autocompleteRef.current = null;
+    };
+  }, [isLoaded, resolvePlaceDetails]);
+
+  const onInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const next = e.target.value;
+    setText(next);
+    onChangeRef.current(next);
+
+    // Clear selection only once when user edits after picking a place
+    if (hadSelectionRef.current) {
+      hadSelectionRef.current = false;
+      onAddressSelectedRef.current(null);
+    }
   };
 
   const useCurrentLocation = () => {
@@ -123,7 +248,7 @@ export function AddressAutocomplete({
               setGeoError("לא הצלחנו להמיר את המיקום לכתובת.");
               return;
             }
-            applyPlace(results[0] as Parameters<typeof applyPlace>[0]);
+            applyPlace(results[0] as PlaceLike);
           }
         );
       },
@@ -155,43 +280,32 @@ export function AddressAutocomplete({
         כתובת למשלוח <span className="text-brand-error">*</span>
       </Label>
 
+      <div ref={placesHostRef} className="hidden" aria-hidden />
+
       {!isLoaded ? (
         <div className="flex h-12 items-center gap-2 rounded-lg border border-input px-3 text-brand-muted">
           <Loader2 className="size-4 animate-spin" />
           טוען מפות...
         </div>
-      ) : (
-        <Autocomplete
-          onLoad={(ac) => {
-            autocompleteRef.current = ac;
-            ac.setComponentRestrictions({ country: ["il"] });
-            ac.setFields([
-              "formatted_address",
-              "address_components",
-              "geometry",
-            ]);
-          }}
-          onPlaceChanged={onPlaceChanged}
-          options={{
-            componentRestrictions: { country: "il" },
-            fields: ["formatted_address", "address_components", "geometry"],
-          }}
-        >
-          <Input
-            id="dropoff_address"
-            value={value}
-            disabled={disabled}
-            onChange={(e) => {
-              onChange(e.target.value);
-              onAddressSelected(null);
-            }}
-            placeholder="הקלידו כתובת בישראל..."
-            className="h-12 text-base"
-            aria-invalid={Boolean(error)}
-            autoComplete="off"
-          />
-        </Autocomplete>
-      )}
+      ) : null}
+
+      {/* Keep the input mounted once maps are ready; never wrap in remounting Autocomplete */}
+      <input
+        ref={inputRef}
+        id="dropoff_address"
+        type="text"
+        value={text}
+        disabled={disabled || !isLoaded}
+        onChange={onInputChange}
+        placeholder="הקלידו כתובת בישראל..."
+        className={cn(
+          "h-12 w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive",
+          !isLoaded && "hidden"
+        )}
+        aria-invalid={Boolean(error)}
+        autoComplete="off"
+        suppressHydrationWarning
+      />
 
       <Button
         type="button"
@@ -221,7 +335,7 @@ export function AddressAutocomplete({
         </p>
       )}
 
-      {serviceAvailable === false && value && (
+      {serviceAvailable === false && text && (
         <Alert
           variant="destructive"
           className="border-brand-error/40 bg-brand-error/5"
@@ -238,3 +352,5 @@ export function AddressAutocomplete({
     </div>
   );
 }
+
+export const AddressAutocomplete = memo(AddressAutocompleteComponent);
