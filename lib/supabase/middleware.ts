@@ -32,8 +32,26 @@ export async function updateSession(request: NextRequest) {
     },
   });
 
-  // Refresh session if expired — required for Server Components.
-  await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  const pathname = request.nextUrl.pathname;
+  const isCourierLogin = pathname === "/courier/login";
+  const isCourierArea =
+    pathname === "/courier" || pathname.startsWith("/courier/");
+
+  if (isCourierArea && !isCourierLogin && !user) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/courier/login";
+    return NextResponse.redirect(redirectUrl);
+  }
+
+  if (isCourierLogin && user) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/courier";
+    return NextResponse.redirect(redirectUrl);
+  }
 
   return supabaseResponse;
 }

@@ -2,9 +2,13 @@ create table couriers (
   id uuid primary key default gen_random_uuid(),
   full_name text not null,
   phone text not null,
+  auth_user_id uuid unique references auth.users(id),
   is_active boolean default true,
   created_at timestamptz default now()
 );
+
+create index if not exists couriers_auth_user_id_idx
+  on couriers (auth_user_id);
 
 create table service_areas (
   id uuid primary key default gen_random_uuid(),
@@ -40,6 +44,7 @@ create table orders (
   payment_provider_ref text,
   created_at timestamptz default now(),
   claimed_at timestamptz,
+  picked_up_at timestamptz,
   delivered_at timestamptz
 );
 
@@ -116,5 +121,40 @@ create policy "Public can view proofs"
   to anon, authenticated
   using (bucket_id = 'proofs');
 
--- TODO: Courier policies (claim orders, update status, view assigned orders)
+-- Courier: read own profile
+create policy "Couriers can view own profile"
+  on couriers
+  for select
+  to authenticated
+  using (auth_user_id = auth.uid());
+
+-- Courier: read pending orders + assigned orders
+create policy "Couriers can view pending and assigned orders"
+  on orders
+  for select
+  to authenticated
+  using (
+    status = 'pending'
+    or courier_id in (
+      select id from couriers where auth_user_id = auth.uid()
+    )
+  );
+
+-- Courier: update pending (claim) or own assigned orders
+create policy "Couriers can update pending or assigned orders"
+  on orders
+  for update
+  to authenticated
+  using (
+    status = 'pending'
+    or courier_id in (
+      select id from couriers where auth_user_id = auth.uid()
+    )
+  )
+  with check (
+    courier_id in (
+      select id from couriers where auth_user_id = auth.uid()
+    )
+  );
+
 -- TODO: Admin policies (full CRUD on couriers, service_areas, orders, pricing_rules)
