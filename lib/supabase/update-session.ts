@@ -1,6 +1,10 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+/**
+ * Edge-compatible session refresh + /courier route protection.
+ * Imported by root middleware.ts via a relative path (not @/) so Vercel Edge can bundle it.
+ */
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
