@@ -9,7 +9,6 @@ import {
   AddressAutocomplete,
   type SelectedAddress,
 } from "@/components/order/address-autocomplete";
-import { ProofUpload } from "@/components/order/proof-upload";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -38,14 +37,24 @@ export function OrderForm() {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [serviceAvailable, setServiceAvailable] = useState<boolean | null>(
-    null
-  );
-  const [checkingService, setCheckingService] = useState(false);
+  const [pickupServiceAvailable, setPickupServiceAvailable] = useState<
+    boolean | null
+  >(null);
+  const [dropoffServiceAvailable, setDropoffServiceAvailable] = useState<
+    boolean | null
+  >(null);
+  const [checkingPickupService, setCheckingPickupService] = useState(false);
+  const [checkingDropoffService, setCheckingDropoffService] = useState(false);
   const [pricing, setPricing] = useState<PricingState | null>(null);
   const [pricingLoading, setPricingLoading] = useState(false);
-  const [selectedCity, setSelectedCity] = useState<string | null>(null);
-  const [cityCandidates, setCityCandidates] = useState<string[]>([]);
+  const [pickupCity, setPickupCity] = useState<string | null>(null);
+  const [dropoffCity, setDropoffCity] = useState<string | null>(null);
+  const [pickupCityCandidates, setPickupCityCandidates] = useState<string[]>(
+    []
+  );
+  const [dropoffCityCandidates, setDropoffCityCandidates] = useState<string[]>(
+    []
+  );
 
   const form = useForm<OrderFormValues>({
     resolver: zodResolver(orderFormSchema),
@@ -53,10 +62,11 @@ export function OrderForm() {
       customer_name: "",
       customer_phone: "",
       pickup_location: "",
+      pickup_city: "",
       pickup_lat: undefined,
       pickup_lng: undefined,
       tracking_number: "",
-      proof_image_url: "",
+      proof_text: "",
       dropoff_address: "",
       dropoff_city: "",
       house_number: "",
@@ -86,12 +96,16 @@ export function OrderForm() {
   const dropoffLng = watch("dropoff_lng");
   const addressSelected = dropoffLat != null && dropoffLng != null;
   const pickupSelected = pickupLat != null && pickupLng != null;
-  const formLocked = serviceAvailable === false;
+  const pickupBlocked = pickupServiceAvailable === false;
+  const dropoffBlocked = dropoffServiceAvailable === false;
+  const formLocked = pickupBlocked || dropoffBlocked;
+  const bothInService =
+    pickupServiceAvailable === true && dropoffServiceAvailable === true;
 
-  const checkServiceArea = useCallback(
+  const checkPickupServiceArea = useCallback(
     async (city: string, candidates: string[] = []) => {
-      setCheckingService(true);
-      setServiceAvailable(null);
+      setCheckingPickupService(true);
+      setPickupServiceAvailable(null);
       try {
         const res = await fetch("/api/service-area", {
           method: "POST",
@@ -106,9 +120,48 @@ export function OrderForm() {
           matched_city?: string | null;
         };
         const available = Boolean(data.available);
-        setServiceAvailable(available);
+        setPickupServiceAvailable(available);
         if (available && data.matched_city) {
-          setSelectedCity(data.matched_city);
+          setPickupCity(data.matched_city);
+          setValue("pickup_city", data.matched_city, { shouldValidate: true });
+        }
+        if (!available) {
+          setPricing(null);
+          setValue("distance_km", null);
+          setValue("price", null);
+        }
+        return available;
+      } catch {
+        setPickupServiceAvailable(false);
+        return false;
+      } finally {
+        setCheckingPickupService(false);
+      }
+    },
+    [setValue]
+  );
+
+  const checkDropoffServiceArea = useCallback(
+    async (city: string, candidates: string[] = []) => {
+      setCheckingDropoffService(true);
+      setDropoffServiceAvailable(null);
+      try {
+        const res = await fetch("/api/service-area", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            city_name: city,
+            city_candidates: candidates,
+          }),
+        });
+        const data = (await res.json()) as {
+          available?: boolean;
+          matched_city?: string | null;
+        };
+        const available = Boolean(data.available);
+        setDropoffServiceAvailable(available);
+        if (available && data.matched_city) {
+          setDropoffCity(data.matched_city);
           setValue("dropoff_city", data.matched_city, { shouldValidate: true });
         }
         if (!available) {
@@ -118,18 +171,22 @@ export function OrderForm() {
         }
         return available;
       } catch {
-        setServiceAvailable(false);
+        setDropoffServiceAvailable(false);
         return false;
       } finally {
-        setCheckingService(false);
+        setCheckingDropoffService(false);
       }
     },
     [setValue]
   );
 
   const onPickupSelected = useCallback(
-    (selected: SelectedAddress | null) => {
+    async (selected: SelectedAddress | null) => {
       if (!selected) {
+        setPickupCity(null);
+        setPickupCityCandidates([]);
+        setPickupServiceAvailable(null);
+        setValue("pickup_city", "");
         setValue("pickup_lat", undefined as unknown as number);
         setValue("pickup_lng", undefined as unknown as number);
         setPricing(null);
@@ -138,19 +195,24 @@ export function OrderForm() {
         return;
       }
 
+      setPickupCity(selected.city);
+      setPickupCityCandidates(selected.cityCandidates);
       setValue("pickup_location", selected.address, { shouldValidate: true });
+      setValue("pickup_city", selected.city, { shouldValidate: true });
       setValue("pickup_lat", selected.lat, { shouldValidate: true });
       setValue("pickup_lng", selected.lng, { shouldValidate: true });
+
+      await checkPickupServiceArea(selected.city, selected.cityCandidates);
     },
-    [setValue]
+    [checkPickupServiceArea, setValue]
   );
 
   const onDropoffSelected = useCallback(
     async (selected: SelectedAddress | null) => {
       if (!selected) {
-        setSelectedCity(null);
-        setCityCandidates([]);
-        setServiceAvailable(null);
+        setDropoffCity(null);
+        setDropoffCityCandidates([]);
+        setDropoffServiceAvailable(null);
         setPricing(null);
         setValue("dropoff_city", "");
         setValue("dropoff_lat", undefined as unknown as number);
@@ -160,21 +222,21 @@ export function OrderForm() {
         return;
       }
 
-      setSelectedCity(selected.city);
-      setCityCandidates(selected.cityCandidates);
+      setDropoffCity(selected.city);
+      setDropoffCityCandidates(selected.cityCandidates);
       setValue("dropoff_address", selected.address, { shouldValidate: true });
       setValue("dropoff_city", selected.city, { shouldValidate: true });
       setValue("dropoff_lat", selected.lat, { shouldValidate: true });
       setValue("dropoff_lng", selected.lng, { shouldValidate: true });
 
-      await checkServiceArea(selected.city, selected.cityCandidates);
+      await checkDropoffServiceArea(selected.city, selected.cityCandidates);
     },
-    [checkServiceArea, setValue]
+    [checkDropoffServiceArea, setValue]
   );
 
   useEffect(() => {
     if (
-      serviceAvailable !== true ||
+      !bothInService ||
       dropoffLat == null ||
       dropoffLng == null ||
       pickupLat == null ||
@@ -226,7 +288,7 @@ export function OrderForm() {
       cancelled = true;
     };
   }, [
-    serviceAvailable,
+    bothInService,
     dropoffLat,
     dropoffLng,
     pickupLat,
@@ -237,10 +299,19 @@ export function OrderForm() {
   const onSubmit = (values: OrderFormValues) => {
     setSubmitError(null);
 
-    if (serviceAvailable !== true) {
+    if (pickupServiceAvailable !== true) {
       setSubmitError(
-        selectedCity
-          ? `מצטערים, השירות עדיין לא זמין ב${selectedCity} כרגע. אנחנו כרגע פועלים באזור תל אביב-יפו.`
+        pickupCity
+          ? `מצטערים, השירות עדיין לא זמין ב${pickupCity} כרגע. אנחנו כרגע פועלים באזור תל אביב-יפו.`
+          : "נא לבחור נקודת איסוף באזור השירות."
+      );
+      return;
+    }
+
+    if (dropoffServiceAvailable !== true) {
+      setSubmitError(
+        dropoffCity
+          ? `מצטערים, השירות עדיין לא זמין ב${dropoffCity} כרגע. אנחנו כרגע פועלים באזור תל אביב-יפו.`
           : "נא לבחור כתובת באזור השירות."
       );
       return;
@@ -254,7 +325,8 @@ export function OrderForm() {
           body: JSON.stringify({
             ...values,
             service_area_ok: true,
-            city_candidates: cityCandidates,
+            city_candidates: dropoffCityCandidates,
+            pickup_city_candidates: pickupCityCandidates,
           }),
         });
         const data = (await res.json()) as {
@@ -265,7 +337,7 @@ export function OrderForm() {
         if (!res.ok || !data.order_number) {
           setSubmitError(data.error || "שגיאה בשליחת ההזמנה.");
           if (data.error?.includes("לא זמין")) {
-            setServiceAvailable(false);
+            // Keep existing area flags; server message shown
           }
           return;
         }
@@ -346,12 +418,17 @@ export function OrderForm() {
                 value={field.value ?? ""}
                 onChange={field.onChange}
                 onAddressSelected={onPickupSelected}
-                checkServiceArea={false}
+                checkServiceArea
+                showGeolocation={false}
+                serviceAvailable={pickupServiceAvailable}
+                checkingService={checkingPickupService}
+                cityName={pickupCity}
                 inputId="pickup_location"
                 label="מאיפה לאסוף"
                 placeholder="סניף דואר / שם החנות..."
                 error={
                   fieldState.error?.message ||
+                  errors.pickup_city?.message ||
                   errors.pickup_lat?.message ||
                   errors.pickup_lng?.message
                 }
@@ -359,6 +436,8 @@ export function OrderForm() {
             )}
           />
 
+          {!pickupBlocked && (
+            <>
           <div className="space-y-2">
             <Label htmlFor="tracking_number" className={labelClass}>
               מספר מעקב{" "}
@@ -372,12 +451,20 @@ export function OrderForm() {
             />
           </div>
 
-          <ProofUpload
-            value={watch("proof_image_url") || ""}
-            onChange={(url) =>
-              setValue("proof_image_url", url, { shouldValidate: true })
-            }
-          />
+          <div className="space-y-2">
+            <Label htmlFor="proof_text" className={labelClass}>
+              הודעת המשלוח שקיבלת{" "}
+              <span className="font-normal text-brand-muted">(אופציונלי)</span>
+            </Label>
+            <Textarea
+              id="proof_text"
+              rows={5}
+              className="min-h-28 resize-y text-base"
+              placeholder="הדביקו כאן את ההודעה שקיבלתם מדואר ישראל או מהחנות (לא חובה, אבל עוזר לנו לאתר את המשלוח מהר יותר)"
+              suppressHydrationWarning
+              {...register("proof_text")}
+            />
+          </div>
 
           <Controller
             name="dropoff_address"
@@ -388,9 +475,9 @@ export function OrderForm() {
                 onChange={field.onChange}
                 onAddressSelected={onDropoffSelected}
                 checkServiceArea
-                serviceAvailable={serviceAvailable}
-                checkingService={checkingService}
-                cityName={selectedCity}
+                serviceAvailable={dropoffServiceAvailable}
+                checkingService={checkingDropoffService}
+                cityName={dropoffCity}
                 inputId="dropoff_address"
                 label="כתובת למשלוח"
                 error={
@@ -409,18 +496,21 @@ export function OrderForm() {
             >
               <div className="space-y-2">
                 <Label htmlFor="house_number" className={labelClass}>
-                  מספר בית{" "}
-                  <span className="font-normal text-brand-muted">
-                    (אופציונלי)
-                  </span>
+                  מספר בית <span className="text-brand-error">*</span>
                 </Label>
                 <Input
                   id="house_number"
                   className={fieldClass}
                   autoComplete="off"
+                  aria-invalid={Boolean(errors.house_number)}
                   suppressHydrationWarning
                   {...register("house_number")}
                 />
+                {errors.house_number && (
+                  <p className="text-sm text-brand-error">
+                    {errors.house_number.message}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -472,6 +562,8 @@ export function OrderForm() {
               </div>
             </fieldset>
           )}
+            </>
+          )}
 
           <div className="rounded-xl bg-brand-bgLight p-4 ring-1 ring-black/5">
             <p className="text-sm text-brand-muted">מחיר משוער</p>
@@ -484,7 +576,7 @@ export function OrderForm() {
               <p className="mt-1 text-3xl font-bold tracking-tight text-brand-dark">
                 ₪{pricing.price}
               </p>
-            ) : serviceAvailable === true && pickupSelected ? (
+            ) : bothInService && pickupSelected ? (
               <p className="mt-1 text-lg font-semibold text-brand-dark">
                 מחיר: יחושב ידנית
               </p>
@@ -513,7 +605,12 @@ export function OrderForm() {
 
           <Button
             type="submit"
-            disabled={isPending || formLocked || checkingService}
+            disabled={
+              isPending ||
+              formLocked ||
+              checkingPickupService ||
+              checkingDropoffService
+            }
             className="h-14 w-full bg-brand-yellow text-base font-bold text-brand-dark hover:bg-brand-yellowHover disabled:opacity-50"
           >
             {isPending ? (

@@ -15,16 +15,17 @@ export const orderFormSchema = z.object({
     .string()
     .trim()
     .min(3, "נא לבחור נקודת איסוף מהרשימה"),
+  pickup_city: z.string().trim().min(1, "לא זוהתה עיר בנקודת האיסוף"),
   pickup_lat: z.number({ error: "נא לבחור נקודת איסוף מהרשימה" }),
   pickup_lng: z.number({ error: "נא לבחור נקודת איסוף מהרשימה" }),
   tracking_number: z.string().trim().optional().or(z.literal("")),
-  proof_image_url: z.string().url().optional().or(z.literal("")),
+  proof_text: z.string().trim().optional().or(z.literal("")),
   dropoff_address: z
     .string()
     .trim()
     .min(3, "נא לבחור כתובת מהרשימה"),
   dropoff_city: z.string().trim().min(1, "לא זוהתה עיר בכתובת"),
-  house_number: z.string().trim().optional().or(z.literal("")),
+  house_number: z.string().trim().min(1, "נא להזין מספר בית"),
   entrance_number: z.string().trim().optional().or(z.literal("")),
   entry_code: z.string().trim().optional().or(z.literal("")),
   note: z.string().trim().optional().or(z.literal("")),

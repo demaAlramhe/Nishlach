@@ -1,9 +1,10 @@
 create table couriers (
   id uuid primary key default gen_random_uuid(),
   full_name text not null,
-  phone text not null,
+  phone text,
   auth_user_id uuid unique references auth.users(id),
   is_active boolean default true,
+  is_admin boolean not null default false,
   created_at timestamptz default now()
 );
 
@@ -28,6 +29,7 @@ create table orders (
   pickup_lng numeric,
   tracking_number text,
   proof_image_url text,
+  proof_text text,
   dropoff_address text not null,
   dropoff_city text not null,
   house_number text,
@@ -48,12 +50,26 @@ create table orders (
   delivered_at timestamptz
 );
 
+-- Legacy tiered pricing (unused by formula; kept for future zone pricing)
 create table pricing_rules (
   id uuid primary key default gen_random_uuid(),
   min_km numeric not null,
   max_km numeric,
   price numeric not null
 );
+
+-- Single-row formula constants for findPriceForDistance
+create table pricing_config (
+  id uuid primary key default gen_random_uuid(),
+  base_price numeric not null default 50,
+  free_km numeric not null default 5,
+  price_per_km numeric not null default 5,
+  updated_at timestamptz not null default now()
+);
+
+insert into pricing_config (base_price, free_km, price_per_km)
+select 50, 5, 5
+where not exists (select 1 from pricing_config);
 
 -- Sequential order numbers: NS-1001, NS-1002, ...
 create sequence if not exists order_number_seq start with 1001;
@@ -69,11 +85,33 @@ $$;
 
 grant execute on function next_order_number() to anon, authenticated;
 
+-- Active admin check (security definer + row_security off — avoids RLS recursion on couriers)
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.couriers
+    where auth_user_id = auth.uid()
+      and is_admin = true
+      and is_active = true
+  );
+$$;
+
+revoke all on function public.is_admin() from public;
+grant execute on function public.is_admin() to authenticated;
+
 -- Enable Row Level Security
 alter table couriers enable row level security;
 alter table service_areas enable row level security;
 alter table orders enable row level security;
 alter table pricing_rules enable row level security;
+alter table pricing_config enable row level security;
 
 -- Public: SELECT active service areas
 create policy "Public can view active service areas"
@@ -82,11 +120,24 @@ create policy "Public can view active service areas"
   to anon, authenticated
   using (is_active = true);
 
--- Public: SELECT pricing rules (for quote display)
+-- Public: SELECT pricing rules (legacy quote display)
 create policy "Public can view pricing rules"
   on pricing_rules
   for select
   to anon, authenticated
+  using (true);
+
+-- Public / authenticated: SELECT pricing formula config
+create policy "Anon can view pricing config"
+  on pricing_config
+  for select
+  to anon
+  using (true);
+
+create policy "Authenticated can view pricing config"
+  on pricing_config
+  for select
+  to authenticated
   using (true);
 
 -- Public: INSERT orders
@@ -157,4 +208,68 @@ create policy "Couriers can update pending or assigned orders"
     )
   );
 
--- TODO: Admin policies (full CRUD on couriers, service_areas, orders, pricing_rules)
+-- ============================================================
+-- Admin policies (require public.is_admin())
+-- ============================================================
+
+-- Couriers
+create policy "Admins can view all couriers"
+  on couriers
+  for select
+  to authenticated
+  using (public.is_admin());
+
+create policy "Admins can insert couriers"
+  on couriers
+  for insert
+  to authenticated
+  with check (public.is_admin());
+
+create policy "Admins can update couriers"
+  on couriers
+  for update
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- Orders
+create policy "Admins can view all orders"
+  on orders
+  for select
+  to authenticated
+  using (public.is_admin());
+
+create policy "Admins can update all orders"
+  on orders
+  for update
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- Service areas
+create policy "Admins can view all service areas"
+  on service_areas
+  for select
+  to authenticated
+  using (public.is_admin());
+
+create policy "Admins can insert service areas"
+  on service_areas
+  for insert
+  to authenticated
+  with check (public.is_admin());
+
+create policy "Admins can update service areas"
+  on service_areas
+  for update
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+-- Pricing config (edit formula constants)
+create policy "Admins can update pricing config"
+  on pricing_config
+  for update
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());

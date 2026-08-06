@@ -38,7 +38,7 @@ type AddressAutocompleteProps = {
   value: string;
   onChange: (value: string) => void;
   onAddressSelected: (address: SelectedAddress | null) => void;
-  /** When false, skip service-area UI/checks (pickup). Default true. */
+  /** When false, skip service-area UI/checks. Default true. */
   checkServiceArea?: boolean;
   serviceAvailable?: boolean | null;
   checkingService?: boolean;

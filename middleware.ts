@@ -47,8 +47,9 @@ export async function middleware(request: NextRequest) {
   const isCourierLogin = pathname === "/courier/login";
   const isCourierArea =
     pathname === "/courier" || pathname.startsWith("/courier/");
+  const isAdminArea = pathname === "/admin" || pathname.startsWith("/admin/");
 
-  if (isCourierArea && !isCourierLogin && !user) {
+  if ((isCourierArea && !isCourierLogin && !user) || (isAdminArea && !user)) {
     const redirectUrl = request.nextUrl.clone();
     redirectUrl.pathname = "/courier/login";
     return NextResponse.redirect(redirectUrl);

@@ -1,12 +1,13 @@
+import path from "path";
+import { fileURLToPath } from "url";
 import type { NextConfig } from "next";
 
-/**
- * Keep this config Edge/build-safe: no Node `path` / `__dirname`
- * (those caused Vercel Edge middleware ReferenceError: __dirname is not defined).
- *
- * outputFileTracingRoot was only needed locally when a parent package-lock.json
- * confused tracing — not required on Vercel.
- */
-const nextConfig: NextConfig = {};
+// ESM-safe project root (do not use bare __dirname — breaks Edge/ESM contexts).
+const projectRoot = path.dirname(fileURLToPath(import.meta.url));
+
+const nextConfig: NextConfig = {
+  // Prevent Next from picking C:\Users\Dema\package-lock.json as workspace root.
+  outputFileTracingRoot: projectRoot,
+};
 
 export default nextConfig;

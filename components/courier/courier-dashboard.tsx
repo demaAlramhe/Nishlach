@@ -1,19 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, LogOut, Package, RefreshCw } from "lucide-react";
+import { Check, Loader2, LogOut, Package, RefreshCw, Settings } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
 import {
+  ORDER_STATUS_BADGE_CLASS,
   ORDER_STATUS_LABELS,
   type CourierOrder,
   type CourierProfile,
@@ -24,7 +25,7 @@ import { cn } from "@/lib/utils";
 const POLL_MS = 18_000;
 
 const ORDER_SELECT =
-  "id, order_number, customer_name, customer_phone, pickup_location, dropoff_address, dropoff_city, house_number, entrance_number, entry_code, note, distance_km, price, status, courier_id, created_at, claimed_at, picked_up_at, delivered_at";
+  "id, order_number, customer_name, customer_phone, pickup_location, tracking_number, proof_text, dropoff_address, dropoff_city, house_number, entrance_number, entry_code, note, distance_km, price, status, courier_id, created_at, claimed_at, picked_up_at, delivered_at";
 
 type Props = {
   courier: CourierProfile;
@@ -41,42 +42,188 @@ function formatDropoff(order: CourierOrder) {
   return parts.join(" · ");
 }
 
-function OrderMeta({ order }: { order: CourierOrder }) {
+function formatPrice(order: CourierOrder) {
+  if (order.price != null && order.price !== "") {
+    return `₪${order.price}`;
+  }
+  return "יחושב ידנית";
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const label = ORDER_STATUS_LABELS[status] ?? status;
+  const className =
+    ORDER_STATUS_BADGE_CLASS[status] ?? ORDER_STATUS_BADGE_CLASS.pending;
+
   return (
-    <dl className="space-y-2 text-sm">
-      <div>
-        <dt className="text-brand-muted">איסוף</dt>
-        <dd className="font-medium text-brand-dark">{order.pickup_location}</dd>
-      </div>
-      <div>
-        <dt className="text-brand-muted">מסירה</dt>
-        <dd className="font-medium text-brand-dark">{formatDropoff(order)}</dd>
-      </div>
-      <div className="flex flex-wrap gap-4 pt-1">
-        {order.distance_km != null && (
-          <div>
-            <dt className="text-brand-muted">מרחק</dt>
-            <dd className="font-semibold text-brand-dark">
-              {order.distance_km} ק״מ
-            </dd>
-          </div>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ring-1",
+        className
+      )}
+    >
+      {status === "delivered" && <Check className="size-3" aria-hidden />}
+      {label}
+    </span>
+  );
+}
+
+function MetaCell({
+  label,
+  children,
+  dir,
+}: {
+  label: string;
+  children: ReactNode;
+  dir?: "ltr" | "rtl";
+}) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[11px] leading-tight text-brand-muted">{label}</dt>
+      <dd
+        className="truncate text-sm font-semibold leading-snug text-brand-dark"
+        dir={dir}
+      >
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+function CollapsibleProof({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > 80 || text.split("\n").length > 2;
+
+  return (
+    <div>
+      <p className="text-[11px] leading-tight text-brand-muted">הודעת המשלוח</p>
+      <div
+        className={cn(
+          "mt-1 whitespace-pre-wrap rounded-lg border border-black/5 bg-brand-bgLight px-2.5 py-2 text-xs leading-snug text-brand-dark",
+          !expanded && isLong && "line-clamp-2"
         )}
+      >
+        {text}
+      </div>
+      {isLong && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="mt-1 text-xs font-semibold text-brand-muted underline-offset-2 hover:text-brand-dark hover:underline"
+        >
+          {expanded ? "הסתר הודעה ▴" : "הצג הודעה מלאה ▾"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function OrderMeta({ order }: { order: CourierOrder }) {
+  const proofText = order.proof_text?.trim();
+  const tracking = order.tracking_number?.trim();
+  const distancePrice =
+    order.distance_km != null
+      ? `${order.distance_km} ק״מ · ${formatPrice(order)}`
+      : formatPrice(order);
+
+  return (
+    <div className="space-y-2.5">
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
+        <MetaCell label="לקוח">{order.customer_name}</MetaCell>
+        <MetaCell label="טלפון" dir="ltr">
+          <a
+            href={`tel:${order.customer_phone}`}
+            className="underline-offset-2 hover:underline"
+          >
+            {order.customer_phone}
+          </a>
+        </MetaCell>
+        <MetaCell label="מספר מעקב" dir="ltr">
+          {tracking || "—"}
+        </MetaCell>
+        <MetaCell label="מרחק / מחיר">{distancePrice}</MetaCell>
+      </dl>
+
+      <dl className="space-y-1.5">
         <div>
-          <dt className="text-brand-muted">מחיר</dt>
-          <dd className="font-semibold text-brand-dark">
-            {order.price != null && order.price !== ""
-              ? `₪${order.price}`
-              : "יחושב ידנית"}
+          <dt className="text-[11px] leading-tight text-brand-muted">איסוף</dt>
+          <dd className="text-xs leading-snug text-brand-dark">
+            {order.pickup_location}
           </dd>
         </div>
-      </div>
-      {order.note && (
         <div>
-          <dt className="text-brand-muted">הערה</dt>
-          <dd className="text-brand-dark">{order.note}</dd>
+          <dt className="text-[11px] leading-tight text-brand-muted">מסירה</dt>
+          <dd className="text-xs leading-snug text-brand-dark">
+            {formatDropoff(order)}
+          </dd>
+        </div>
+      </dl>
+
+      {proofText && <CollapsibleProof text={proofText} />}
+
+      {order.note?.trim() && (
+        <div>
+          <p className="text-[11px] leading-tight text-brand-muted">הערה</p>
+          <p className="text-xs leading-snug text-brand-dark">{order.note}</p>
         </div>
       )}
-    </dl>
+    </div>
+  );
+}
+
+type OrderCardProps = {
+  order: CourierOrder;
+  actionLabel?: string;
+  actionLoadingLabel?: string;
+  onAction?: () => void;
+  actionBusy?: boolean;
+  muted?: boolean;
+};
+
+function OrderCard({
+  order,
+  actionLabel,
+  actionLoadingLabel = "מעדכנים...",
+  onAction,
+  actionBusy,
+  muted,
+}: OrderCardProps) {
+  return (
+    <Card
+      className={cn(
+        "border-0 bg-white shadow-sm ring-1 ring-black/5",
+        muted && "opacity-70"
+      )}
+    >
+      <CardHeader className="pb-2 pt-4">
+        <div className="flex items-start justify-between gap-3">
+          <CardTitle className="flex min-w-0 items-center gap-2 text-base text-brand-dark">
+            <Package className="size-4 shrink-0 text-brand-yellow" />
+            <span className="truncate">{order.order_number}</span>
+          </CardTitle>
+          <StatusBadge status={order.status} />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3 pb-4">
+        <OrderMeta order={order} />
+        {actionLabel && onAction && (
+          <Button
+            type="button"
+            disabled={actionBusy}
+            onClick={onAction}
+            className="h-12 w-full bg-brand-yellow text-base font-bold text-brand-dark hover:bg-brand-yellowHover disabled:opacity-60"
+          >
+            {actionBusy ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                {actionLoadingLabel}
+              </>
+            ) : (
+              actionLabel
+            )}
+          </Button>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -244,6 +391,96 @@ export function CourierDashboard({ courier }: Props) {
   const pickedUp = myOrders.filter((o) => o.status === "picked_up");
   const delivered = myOrders.filter((o) => o.status === "delivered");
 
+  const sectionTabs = useMemo(() => {
+    const tabs: { id: string; label: string; count: number }[] = [];
+    if (openOrders.length > 0) {
+      tabs.push({
+        id: "open-orders",
+        label: "פתוחות",
+        count: openOrders.length,
+      });
+    }
+    if (claimed.length > 0) {
+      tabs.push({ id: "my-claimed", label: "נתפסו", count: claimed.length });
+    }
+    if (pickedUp.length > 0) {
+      tabs.push({
+        id: "my-picked-up",
+        label: "נאספו",
+        count: pickedUp.length,
+      });
+    }
+    if (delivered.length > 0) {
+      tabs.push({
+        id: "my-delivered",
+        label: "נמסרו",
+        count: delivered.length,
+      });
+    }
+    return tabs;
+  }, [openOrders.length, claimed.length, pickedUp.length, delivered.length]);
+
+  const [activeSection, setActiveSection] = useState<string | null>(null);
+  const scrollingToRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (sectionTabs.length === 0) {
+      setActiveSection(null);
+      return;
+    }
+
+    setActiveSection((current) =>
+      current && sectionTabs.some((t) => t.id === current)
+        ? current
+        : sectionTabs[0].id
+    );
+
+    const elements = sectionTabs
+      .map((t) => document.getElementById(t.id))
+      .filter((el): el is HTMLElement => Boolean(el));
+
+    if (elements.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (scrollingToRef.current) return;
+
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort(
+            (a, b) =>
+              (a.target as HTMLElement).offsetTop -
+              (b.target as HTMLElement).offsetTop
+          );
+
+        if (visible[0]?.target.id) {
+          setActiveSection(visible[0].target.id);
+        }
+      },
+      {
+        // Account for sticky tabs ~56px + a bit of breathing room
+        rootMargin: "-72px 0px -55% 0px",
+        threshold: [0, 0.1, 0.25],
+      }
+    );
+
+    elements.forEach((el) => observer.observe(el));
+    return () => observer.disconnect();
+  }, [sectionTabs]);
+
+  const scrollToSection = (id: string) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    scrollingToRef.current = id;
+    setActiveSection(id);
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.setTimeout(() => {
+      if (scrollingToRef.current === id) {
+        scrollingToRef.current = null;
+      }
+    }, 800);
+  };
+
   return (
     <div className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-6 px-4 py-5">
       <header className="flex items-center justify-between gap-3">
@@ -263,17 +500,56 @@ export function CourierDashboard({ courier }: Props) {
             </p>
           </div>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={logout}
-          disabled={isPending}
-          className="h-11 shrink-0 gap-2"
-        >
-          <LogOut className="size-4" />
-          התנתק
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          {courier.is_admin && (
+            <Link
+              href="/admin"
+              className="inline-flex h-11 items-center gap-1.5 rounded-lg border border-input bg-white px-3 text-sm font-semibold text-brand-dark hover:bg-brand-bgLight"
+            >
+              <Settings className="size-4" />
+              ניהול
+            </Link>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={logout}
+            disabled={isPending}
+            className="h-11 gap-2"
+          >
+            <LogOut className="size-4" />
+            התנתק
+          </Button>
+        </div>
       </header>
+
+      {sectionTabs.length > 0 && (
+        <nav
+          aria-label="ניווט בין סטטוסים"
+          className="sticky top-0 z-20 -mx-4 border-b border-black/5 bg-brand-bgLight px-4 py-2"
+        >
+          <div className="-mx-1 flex gap-1.5 overflow-x-auto pb-0.5">
+            {sectionTabs.map((tab) => {
+              const active = activeSection === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => scrollToSection(tab.id)}
+                  className={cn(
+                    "shrink-0 rounded-full px-3.5 py-2 text-sm font-semibold transition-colors",
+                    active
+                      ? "bg-brand-yellow text-brand-dark"
+                      : "bg-white text-brand-muted ring-1 ring-black/5 hover:text-brand-dark"
+                  )}
+                >
+                  {tab.label} ({tab.count})
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      )}
 
       {actionError && (
         <Alert
@@ -286,9 +562,19 @@ export function CourierDashboard({ courier }: Props) {
         </Alert>
       )}
 
-      <section className="space-y-3">
+      <section
+        id="open-orders"
+        className="scroll-mt-16 space-y-3"
+      >
         <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-bold text-brand-dark">הזמנות פתוחות</h2>
+          <h2 className="text-lg font-bold text-brand-dark">
+            הזמנות פתוחות
+            {!loading && openOrders.length > 0 && (
+              <span className="ms-2 text-sm font-semibold text-brand-muted">
+                ({openOrders.length})
+              </span>
+            )}
+          </h2>
           <Button
             type="button"
             variant="ghost"
@@ -315,48 +601,37 @@ export function CourierDashboard({ courier }: Props) {
         ) : (
           <div className="space-y-3">
             {openOrders.map((order) => (
-              <Card
+              <OrderCard
                 key={order.id}
-                className="border-0 bg-white shadow-sm ring-1 ring-black/5"
-              >
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center gap-2 text-lg text-brand-dark">
-                    <Package className="size-5 text-brand-yellow" />
-                    {order.order_number}
-                  </CardTitle>
-                  <CardDescription className="text-base text-brand-dark">
-                    {order.customer_name}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <OrderMeta order={order} />
-                  <Button
-                    type="button"
-                    disabled={isPending && actionId === order.id}
-                    onClick={() => claimOrder(order.id)}
-                    className="h-12 w-full bg-brand-yellow text-base font-bold text-brand-dark hover:bg-brand-yellowHover"
-                  >
-                    {isPending && actionId === order.id ? (
-                      <>
-                        <Loader2 className="size-4 animate-spin" />
-                        לוקחים...
-                      </>
-                    ) : (
-                      "קח הזמנה"
-                    )}
-                  </Button>
-                </CardContent>
-              </Card>
+                order={order}
+                actionLabel="קח הזמנה"
+                actionLoadingLabel="לוקחים..."
+                actionBusy={isPending && actionId === order.id}
+                onAction={() => claimOrder(order.id)}
+              />
             ))}
           </div>
         )}
       </section>
 
-      <section className="space-y-4 pb-8">
+      <section className="space-y-5 pb-8">
         <h2 className="text-lg font-bold text-brand-dark">ההזמנות שלי</h2>
 
+        {!loading &&
+          claimed.length === 0 &&
+          pickedUp.length === 0 &&
+          delivered.length === 0 && (
+            <Card className="border-0 bg-white ring-1 ring-black/5">
+              <CardContent className="py-8 text-center text-brand-muted">
+                עדיין אין הזמנות שלך
+              </CardContent>
+            </Card>
+          )}
+
         <OrderGroup
-          title="נלקחו — לחצו אחרי איסוף"
+          id="my-claimed"
+          title="נתפסו"
+          hint="לחצו אחרי האיסוף"
           orders={claimed}
           actionLabel="נאספה"
           onAction={(o) => advanceStatus(o, "picked_up")}
@@ -365,7 +640,9 @@ export function CourierDashboard({ courier }: Props) {
         />
 
         <OrderGroup
-          title="נאספו — בדרך למסירה"
+          id="my-picked-up"
+          title="נאספו"
+          hint="בדרך למסירה"
           orders={pickedUp}
           actionLabel="נמסרה"
           onAction={(o) => advanceStatus(o, "delivered")}
@@ -374,10 +651,12 @@ export function CourierDashboard({ courier }: Props) {
         />
 
         <OrderGroup
+          id="my-delivered"
           title="נמסרו"
           orders={delivered}
           actionId={actionId}
           isPending={isPending}
+          muted
         />
       </section>
     </div>
@@ -385,60 +664,49 @@ export function CourierDashboard({ courier }: Props) {
 }
 
 function OrderGroup({
+  id,
   title,
+  hint,
   orders,
   actionLabel,
   onAction,
   actionId,
   isPending,
+  muted,
 }: {
+  id: string;
   title: string;
+  hint?: string;
   orders: CourierOrder[];
   actionLabel?: string;
   onAction?: (order: CourierOrder) => void;
   actionId: string | null;
   isPending: boolean;
+  muted?: boolean;
 }) {
   if (orders.length === 0) return null;
 
   return (
-    <div className="space-y-2">
-      <h3 className="text-sm font-semibold text-brand-muted">{title}</h3>
+    <div id={id} className="scroll-mt-16 space-y-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <h3 className="text-base font-bold text-brand-dark">
+          {title}
+          <span className="ms-2 text-sm font-semibold text-brand-muted">
+            ({orders.length})
+          </span>
+        </h3>
+        {hint && <p className="text-xs text-brand-muted">{hint}</p>}
+      </div>
       <div className="space-y-3">
         {orders.map((order) => (
-          <Card
+          <OrderCard
             key={order.id}
-            className="border-0 bg-white shadow-sm ring-1 ring-black/5"
-          >
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base text-brand-dark">
-                {order.order_number}
-              </CardTitle>
-              <CardDescription>
-                {ORDER_STATUS_LABELS[order.status] ?? order.status}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <OrderMeta order={order} />
-              {actionLabel && onAction && (
-                <Button
-                  type="button"
-                  disabled={isPending && actionId === order.id}
-                  onClick={() => onAction(order)}
-                  className="h-12 w-full bg-brand-dark text-base font-bold text-white hover:bg-brand-dark/90"
-                >
-                  {isPending && actionId === order.id ? (
-                    <>
-                      <Loader2 className="size-4 animate-spin" />
-                      מעדכנים...
-                    </>
-                  ) : (
-                    actionLabel
-                  )}
-                </Button>
-              )}
-            </CardContent>
-          </Card>
+            order={order}
+            muted={muted}
+            actionLabel={actionLabel}
+            actionBusy={isPending && actionId === order.id}
+            onAction={onAction ? () => onAction(order) : undefined}
+          />
         ))}
       </div>
     </div>

@@ -25,21 +25,39 @@ export async function POST(request: Request) {
 
     const input = parsed.data;
 
-    const { available, matchedCity } = await isActiveServiceArea(
-      input.dropoff_city,
-      Array.isArray(body.city_candidates) ? body.city_candidates : []
+    const pickupArea = await isActiveServiceArea(
+      input.pickup_city,
+      Array.isArray(body.pickup_city_candidates)
+        ? body.pickup_city_candidates
+        : []
     );
-    if (!available) {
+    if (!pickupArea.available) {
       return NextResponse.json(
         {
-          error: `מצטערים, השירות עדיין לא זמין ב${input.dropoff_city} כרגע. אנחנו כרגע פועלים באזור תל אביב-יפו.`,
+          error: `מצטערים, השירות עדיין לא זמין ב${input.pickup_city} כרגע. אנחנו כרגע פועלים באזור תל אביב-יפו.`,
           code: "OUT_OF_SERVICE_AREA",
+          field: "pickup",
         },
         { status: 422 }
       );
     }
 
-    const dropoffCity = matchedCity ?? input.dropoff_city;
+    const dropoffArea = await isActiveServiceArea(
+      input.dropoff_city,
+      Array.isArray(body.city_candidates) ? body.city_candidates : []
+    );
+    if (!dropoffArea.available) {
+      return NextResponse.json(
+        {
+          error: `מצטערים, השירות עדיין לא זמין ב${input.dropoff_city} כרגע. אנחנו כרגע פועלים באזור תל אביב-יפו.`,
+          code: "OUT_OF_SERVICE_AREA",
+          field: "dropoff",
+        },
+        { status: 422 }
+      );
+    }
+
+    const dropoffCity = dropoffArea.matchedCity ?? input.dropoff_city;
 
     console.log("[orders] pricing coords:", {
       origin_lat: input.pickup_lat,
@@ -89,7 +107,7 @@ export async function POST(request: Request) {
         pickup_lat: input.pickup_lat,
         pickup_lng: input.pickup_lng,
         tracking_number: emptyToNull(input.tracking_number),
-        proof_image_url: emptyToNull(input.proof_image_url),
+        proof_text: emptyToNull(input.proof_text),
         dropoff_address: input.dropoff_address,
         dropoff_city: dropoffCity,
         house_number: emptyToNull(input.house_number),

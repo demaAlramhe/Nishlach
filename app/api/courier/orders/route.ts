@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 const ORDER_SELECT =
-  "id, order_number, customer_name, customer_phone, pickup_location, dropoff_address, dropoff_city, house_number, entrance_number, entry_code, note, distance_km, price, status, courier_id, created_at, claimed_at, picked_up_at, delivered_at";
+  "id, order_number, customer_name, customer_phone, pickup_location, tracking_number, proof_text, dropoff_address, dropoff_city, house_number, entrance_number, entry_code, note, distance_km, price, status, courier_id, created_at, claimed_at, picked_up_at, delivered_at";
 
 export async function GET() {
   const supabase = await createClient();

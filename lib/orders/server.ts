@@ -49,6 +49,55 @@ export async function isActiveServiceArea(
   return { available: false, matchedCity: null };
 }
 
+/**
+ * Load formula constants from pricing_config (single row).
+ * Falls back to 50 / 5 / 5 if the table is empty or unreadable.
+ */
+export async function getPricingConfig(): Promise<{
+  base_price: number;
+  free_km: number;
+  price_per_km: number;
+}> {
+  const defaults = { base_price: 50, free_km: 5, price_per_km: 5 };
+  try {
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("pricing_config")
+      .select("base_price, free_km, price_per_km")
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) {
+      console.warn("[pricing] pricing_config unavailable — using defaults", error);
+      return defaults;
+    }
+
+    return {
+      base_price: Number.isFinite(Number(data.base_price))
+        ? Number(data.base_price)
+        : defaults.base_price,
+      free_km: Number.isFinite(Number(data.free_km))
+        ? Number(data.free_km)
+        : defaults.free_km,
+      price_per_km: Number.isFinite(Number(data.price_per_km))
+        ? Number(data.price_per_km)
+        : defaults.price_per_km,
+    };
+  } catch (err) {
+    console.warn("[pricing] getPricingConfig failed — using defaults", err);
+    return defaults;
+  }
+}
+
+/**
+ * Formula pricing (₪):
+ *   base_price for first free_km inclusive
+ *   + price_per_km per extra km beyond free_km, rounded UP to whole km
+ *   price = base + ceil(max(0, distance_km - free_km)) * per_km
+ *
+ * Returns null when distance is unknown → "יחושב ידנית".
+ * Constants come from pricing_config (admin-editable).
+ */
 export async function findPriceForDistance(
   distanceKm: number | null | undefined
 ): Promise<number | null> {
@@ -56,91 +105,23 @@ export async function findPriceForDistance(
 
   if (distanceKm == null || Number.isNaN(distanceKm)) {
     console.warn(
-      "[pricing] no rule matched — reason: distance_km is null/undefined/NaN"
+      "[pricing] no price — distance_km is null/undefined/NaN (manual quote)"
     );
     return null;
   }
 
-  // Exact query:
-  //   select id, min_km, max_km, price from pricing_rules order by min_km asc
-  // Match logic (inclusive range):
-  //   min_km <= distance_km && (max_km is null || distance_km <= max_km)
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("pricing_rules")
-    .select("id, min_km, max_km, price")
-    .order("min_km", { ascending: true });
+  const config = await getPricingConfig();
+  const extraKm = Math.ceil(Math.max(0, distanceKm - config.free_km));
+  const price = config.base_price + extraKm * config.price_per_km;
 
-  if (error) {
-    console.error("[pricing] pricing_rules lookup failed:", error);
-    return null;
-  }
+  console.log("[pricing] formula:", {
+    distance_km: distanceKm,
+    ...config,
+    extra_km_ceil: extraKm,
+    price,
+  });
 
-  console.log("[pricing] computed distance_km:", distanceKm);
-  console.log("[pricing] pricing_rules rows fetched:", data);
-
-  if (!data?.length) {
-    console.warn(
-      "[pricing] no rule matched — reason: pricing_rules table empty or RLS blocked"
-    );
-    return null;
-  }
-
-  for (const rule of data) {
-    const rawMin = rule.min_km;
-    const rawMax = rule.max_km;
-    const rawPrice = rule.price;
-    const min = Number(rawMin);
-    const max = rawMax == null ? null : Number(rawMax);
-    const price = Number(rawPrice);
-
-    console.log("[pricing] evaluating rule:", {
-      id: rule.id,
-      raw: { min_km: rawMin, max_km: rawMax, price: rawPrice },
-      types: {
-        min_km: typeof rawMin,
-        max_km: typeof rawMax,
-        price: typeof rawPrice,
-      },
-      coerced: { min, max, price },
-      distance_km: distanceKm,
-    });
-
-    if (Number.isNaN(min) || (max != null && Number.isNaN(max))) {
-      console.warn(
-        "[pricing] rule FAILED — min_km/max_km not numeric after Number()",
-        { rawMin, rawMax, min, max }
-      );
-      continue;
-    }
-
-    if (distanceKm < min) {
-      console.warn(
-        `[pricing] rule FAILED — distance_km (${distanceKm}) < min_km (${min})`
-      );
-      continue;
-    }
-
-    if (max != null && distanceKm > max) {
-      console.warn(
-        `[pricing] rule FAILED — distance_km (${distanceKm}) > max_km (${max})`
-      );
-      continue;
-    }
-
-    console.log(
-      `[pricing] rule MATCHED — ${min} <= ${distanceKm}` +
-        (max == null ? " (no max)" : ` <= ${max}`) +
-        ` → price ${price}`
-    );
-    return price;
-  }
-
-  console.warn(
-    "[pricing] no rule matched — every row failed the comparisons above",
-    { distance_km: distanceKm }
-  );
-  return null;
+  return price;
 }
 
 export async function getDrivingDistanceKm(

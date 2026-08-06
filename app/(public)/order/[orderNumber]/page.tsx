@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
+import { OrderStatusTracker } from "@/components/order/order-status-tracker";
 import { buttonVariants } from "@/components/ui/button";
 import {
   Card,
@@ -23,7 +24,7 @@ export default async function OrderConfirmationPage({ params }: PageProps) {
   const { data: order, error } = await supabase
     .from("orders")
     .select(
-      "order_number, customer_name, customer_phone, pickup_location, tracking_number, dropoff_address, dropoff_city, house_number, entrance_number, entry_code, note, price, distance_km, status, payment_status, created_at"
+      "order_number, customer_name, customer_phone, pickup_location, tracking_number, dropoff_address, dropoff_city, house_number, entrance_number, entry_code, note, price, distance_km, status, payment_status, created_at, delivered_at"
     )
     .eq("order_number", orderNumber)
     .maybeSingle();
@@ -77,6 +78,12 @@ export default async function OrderConfirmationPage({ params }: PageProps) {
               {order.order_number}
             </p>
           </div>
+
+          <OrderStatusTracker
+            orderNumber={order.order_number}
+            initialStatus={order.status}
+            initialDeliveredAt={order.delivered_at}
+          />
 
           <div className="rounded-xl bg-brand-bgLight p-4 text-center ring-1 ring-black/5">
             <p className="text-sm text-brand-muted">מחיר</p>
