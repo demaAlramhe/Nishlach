@@ -49,6 +49,7 @@ type AddressAutocompleteProps = {
   label?: string;
   placeholder?: string;
   required?: boolean;
+  /** Opt-in: only show "use current location" when explicitly true (dropoff). */
   showGeolocation?: boolean;
 };
 
@@ -82,7 +83,7 @@ function AddressAutocompleteComponent({
   label = "כתובת למשלוח",
   placeholder = "הקלידו כתובת בישראל...",
   required = true,
-  showGeolocation = true,
+  showGeolocation = false,
 }: AddressAutocompleteProps) {
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "";
   const { isLoaded, loadError } = useJsApiLoader({
@@ -310,7 +311,7 @@ function AddressAutocompleteComponent({
         suppressHydrationWarning
       />
 
-      {showGeolocation && (
+      {showGeolocation === true && (
         <Button
           type="button"
           variant="outline"
@@ -323,7 +324,7 @@ function AddressAutocompleteComponent({
           ) : (
             <MapPin className="size-4" />
           )}
-          📍 השתמש במיקום הנוכחי שלי
+          השתמש במיקום הנוכחי שלי
         </Button>
       )}
 

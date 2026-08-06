@@ -466,6 +466,18 @@ export function OrderForm() {
             />
           </div>
 
+          <div
+            className="my-1 flex items-center gap-3"
+            role="separator"
+            aria-label="מעבר לפרטי מסירה"
+          >
+            <div className="h-px flex-1 bg-black/10" />
+            <span className="shrink-0 text-sm font-semibold text-brand-muted">
+              לאן למסור
+            </span>
+            <div className="h-px flex-1 bg-black/10" />
+          </div>
+
           <Controller
             name="dropoff_address"
             control={control}
@@ -475,6 +487,7 @@ export function OrderForm() {
                 onChange={field.onChange}
                 onAddressSelected={onDropoffSelected}
                 checkServiceArea
+                showGeolocation
                 serviceAvailable={dropoffServiceAvailable}
                 checkingService={checkingDropoffService}
                 cityName={dropoffCity}
