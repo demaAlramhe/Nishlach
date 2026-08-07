@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { WhatsAppFloatingButton } from "@/components/public/whatsapp-floating-button";
 
 export default function PublicLayout({
   children,
@@ -23,9 +24,10 @@ export default function PublicLayout({
           <p className="text-sm text-brand-muted">איסוף ומשלוח</p>
         </div>
       </header>
-      <div className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 py-6 sm:py-10">
+      <div className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 py-6 pb-24 sm:py-10 sm:pb-24">
         {children}
       </div>
+      <WhatsAppFloatingButton />
     </div>
   );
 }
