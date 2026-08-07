@@ -1,13 +1,40 @@
-import { citiesMatch } from "@/lib/geo";
+import { citiesMatch, type CityCandidate } from "@/lib/geo";
 import { createClient } from "@/lib/supabase/server";
+
+function normalizeCandidates(
+  cityName: string,
+  extra: Array<string | CityCandidate> = []
+): CityCandidate[] {
+  const out: CityCandidate[] = [];
+  const seen = new Set<string>();
+
+  const push = (name: string, source: CityCandidate["source"]) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ name: trimmed, source });
+  };
+
+  push(cityName, "primary");
+  for (const item of extra) {
+    if (typeof item === "string") {
+      push(item, "primary");
+    } else {
+      push(item.name, item.source);
+    }
+  }
+  return out;
+}
 
 /**
  * Match extracted Google city name(s) against active service_areas.
- * Uses trimmed / hyphen-normalized / case-insensitive comparison.
+ * Exact match after normalize + aliases (see citiesMatch) — no substring.
  */
 export async function isActiveServiceArea(
   cityName: string,
-  extraCandidates: string[] = []
+  extraCandidates: Array<string | CityCandidate> = []
 ): Promise<{ available: boolean; matchedCity: string | null }> {
   const supabase = await createClient();
   const { data, error } = await supabase
@@ -27,25 +54,33 @@ export async function isActiveServiceArea(
     return { available: false, matchedCity: null };
   }
 
-  const candidates = [cityName, ...extraCandidates]
-    .map((c) => c.trim())
-    .filter(Boolean);
+  const candidates = normalizeCandidates(cityName, extraCandidates);
 
-  console.log("[service-area] candidates:", candidates);
+  console.log(
+    "[service-area] candidates:",
+    candidates.map((c) => `${c.name} (${c.source})`)
+  );
   console.log(
     "[service-area] db cities:",
     data.map((row) => row.city_name)
   );
 
   for (const candidate of candidates) {
-    const match = data.find((row) => citiesMatch(candidate, row.city_name));
+    const match = data.find((row) =>
+      citiesMatch(candidate.name, row.city_name)
+    );
     if (match) {
-      console.log("[service-area] matched:", candidate, "→", match.city_name);
+      console.log(
+        `[service-area] matched candidate "${candidate.name}" (source: ${candidate.source}) → db "${match.city_name}"`
+      );
       return { available: true, matchedCity: match.city_name };
     }
   }
 
-  console.warn("[service-area] no match for candidates", candidates);
+  console.warn(
+    "[service-area] no match for candidates",
+    candidates.map((c) => `${c.name} (${c.source})`)
+  );
   return { available: false, matchedCity: null };
 }
 

@@ -14,6 +14,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { extractCityCandidates, extractCityFromComponents } from "@/lib/geo";
+import type { CityCandidate } from "@/lib/geo";
 import { cn } from "@/lib/utils";
 import type { AddressComponent } from "@/types/google-places";
 
@@ -26,13 +27,17 @@ const PLACE_FIELDS = [
   "geometry",
 ] as const;
 
+const MAP_HEIGHT_PX = 180;
+
 export type SelectedAddress = {
   address: string;
   city: string;
-  cityCandidates: string[];
+  cityCandidates: CityCandidate[];
   lat: number;
   lng: number;
 };
+
+type LatLng = { lat: number; lng: number };
 
 type AddressAutocompleteProps = {
   value: string;
@@ -100,6 +105,9 @@ function AddressAutocompleteComponent({
     null
   );
   const placesHostRef = useRef<HTMLDivElement | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const markerRef = useRef<google.maps.Marker | null>(null);
   const hadSelectionRef = useRef(false);
   const onChangeRef = useRef(onChange);
   const onAddressSelectedRef = useRef(onAddressSelected);
@@ -108,6 +116,12 @@ function AddressAutocompleteComponent({
   const [text, setText] = useState(value);
   const [geoLoading, setGeoLoading] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [pin, setPin] = useState<LatLng | null>(null);
+  const [adjustMode, setAdjustMode] = useState(false);
+  const [draftPin, setDraftPin] = useState<LatLng | null>(null);
+  const [confirmLoading, setConfirmLoading] = useState(false);
+
+  const displayPin = adjustMode && draftPin ? draftPin : pin;
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -119,12 +133,20 @@ function AddressAutocompleteComponent({
     setText(value);
   }, [value]);
 
+  const clearSelection = useCallback(() => {
+    hadSelectionRef.current = false;
+    setPin(null);
+    setDraftPin(null);
+    setAdjustMode(false);
+    setConfirmLoading(false);
+    onAddressSelectedRef.current(null);
+  }, []);
+
   const applyPlace = useCallback((place: PlaceLike) => {
     const address = place.formatted_address;
     const location = place.geometry?.location;
     if (!address || !location) {
-      hadSelectionRef.current = false;
-      onAddressSelectedRef.current(null);
+      clearSelection();
       return;
     }
 
@@ -136,13 +158,12 @@ function AddressAutocompleteComponent({
     const city =
       extractCityFromComponents(place.address_components, address) ?? "";
 
-    // TEMP: verify Google Hebrew city extraction — remove once confirmed
-    console.log("Extracted city:", city);
-    console.log("City candidates:", cityCandidates);
-
+    console.log(
+      "[address] city candidates:",
+      cityCandidates.map((c) => `${c.name} (${c.source})`)
+    );
     if (checkServiceAreaRef.current && !city) {
-      hadSelectionRef.current = false;
-      onAddressSelectedRef.current(null);
+      clearSelection();
       setGeoError("לא הצלחנו לזהות את העיר מהכתובת. נסו לבחור כתובת אחרת.");
       return;
     }
@@ -150,6 +171,9 @@ function AddressAutocompleteComponent({
     setGeoError(null);
     hadSelectionRef.current = true;
     setText(address);
+    setPin({ lat, lng });
+    setDraftPin(null);
+    setAdjustMode(false);
     onChangeRef.current(address);
     onAddressSelectedRef.current({
       address,
@@ -158,7 +182,7 @@ function AddressAutocompleteComponent({
       lat,
       lng,
     });
-  }, []);
+  }, [clearSelection]);
 
   const resolvePlaceDetails = useCallback(
     (place: PlaceLike) => {
@@ -217,14 +241,90 @@ function AddressAutocompleteComponent({
     };
   }, [isLoaded, resolvePlaceDetails]);
 
+  // Tear down map when pin cleared
+  useEffect(() => {
+    if (pin) return;
+    if (markerRef.current) {
+      markerRef.current.setMap(null);
+      markerRef.current = null;
+    }
+    mapRef.current = null;
+  }, [pin]);
+
+  // Create / sync map + marker
+  useEffect(() => {
+    if (!isLoaded || !displayPin || !mapContainerRef.current) return;
+    if (!window.google?.maps) return;
+
+    const mapOptions: google.maps.MapOptions = {
+      center: displayPin,
+      zoom: 17,
+      disableDefaultUI: true,
+      clickableIcons: false,
+      keyboardShortcuts: false,
+      mapTypeControl: false,
+      streetViewControl: false,
+      fullscreenControl: false,
+      zoomControl: adjustMode,
+      gestureHandling: adjustMode ? "greedy" : "none",
+      draggable: adjustMode,
+    };
+
+    if (!mapRef.current) {
+      mapRef.current = new google.maps.Map(mapContainerRef.current, mapOptions);
+    } else {
+      mapRef.current.setOptions(mapOptions);
+      mapRef.current.setCenter(displayPin);
+    }
+
+    const map = mapRef.current;
+
+    if (!markerRef.current) {
+      markerRef.current = new google.maps.Marker({
+        map,
+        position: displayPin,
+        draggable: adjustMode,
+        title: "מיקום נבחר",
+      });
+    } else {
+      markerRef.current.setMap(map);
+      markerRef.current.setPosition(displayPin);
+      markerRef.current.setDraggable(adjustMode);
+    }
+
+    const marker = markerRef.current;
+    const listeners: google.maps.MapsEventListener[] = [];
+
+    if (adjustMode) {
+      listeners.push(
+        marker.addListener("dragend", () => {
+          const pos = marker.getPosition();
+          if (!pos) return;
+          setDraftPin({ lat: pos.lat(), lng: pos.lng() });
+        })
+      );
+      listeners.push(
+        map.addListener("click", (e: google.maps.MapMouseEvent) => {
+          if (!e.latLng) return;
+          const next = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+          marker.setPosition(next);
+          setDraftPin(next);
+        })
+      );
+    }
+
+    return () => {
+      listeners.forEach((l) => l.remove());
+    };
+  }, [isLoaded, displayPin, adjustMode]);
+
   const onInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     const next = e.target.value;
     setText(next);
     onChangeRef.current(next);
 
     if (hadSelectionRef.current) {
-      hadSelectionRef.current = false;
-      onAddressSelectedRef.current(null);
+      clearSelection();
     }
   };
 
@@ -264,6 +364,47 @@ function AddressAutocompleteComponent({
     );
   };
 
+  const startAdjustMode = () => {
+    if (!pin || disabled) return;
+    setDraftPin(pin);
+    setAdjustMode(true);
+    setGeoError(null);
+  };
+
+  const cancelAdjustMode = () => {
+    setDraftPin(null);
+    setAdjustMode(false);
+    setConfirmLoading(false);
+    setGeoError(null);
+  };
+
+  const confirmAdjustedPin = () => {
+    const target = draftPin ?? pin;
+    if (!target || !window.google?.maps) return;
+
+    setConfirmLoading(true);
+    setGeoError(null);
+    const geocoder = new google.maps.Geocoder();
+    geocoder.geocode(
+      { location: target, language: "he" },
+      (results, status) => {
+        setConfirmLoading(false);
+        if (status !== "OK" || !results?.[0]) {
+          setGeoError("לא הצלחנו לעדכן את הכתובת מהמיקום החדש. נסו שוב.");
+          return;
+        }
+        // Keep the user-chosen coordinates even if geocode snaps slightly
+        const place = results[0] as PlaceLike;
+        applyPlace({
+          ...place,
+          geometry: {
+            location: target,
+          },
+        });
+      }
+    );
+  };
+
   useEffect(() => {
     if (!apiKey) {
       setGeoError("חסר מפתח Google Maps (NEXT_PUBLIC_GOOGLE_MAPS_API_KEY).");
@@ -299,7 +440,7 @@ function AddressAutocompleteComponent({
         id={inputId}
         type="text"
         value={text}
-        disabled={disabled || !isLoaded}
+        disabled={disabled || !isLoaded || adjustMode}
         onChange={onInputChange}
         placeholder={placeholder}
         className={cn(
@@ -315,7 +456,7 @@ function AddressAutocompleteComponent({
         <Button
           type="button"
           variant="outline"
-          disabled={disabled || geoLoading || !isLoaded}
+          disabled={disabled || geoLoading || !isLoaded || adjustMode}
           onClick={useCurrentLocation}
           className="h-11 w-full justify-center gap-2 text-sm sm:w-auto"
         >
@@ -326,6 +467,68 @@ function AddressAutocompleteComponent({
           )}
           השתמש במיקום הנוכחי שלי
         </Button>
+      )}
+
+      {pin && isLoaded && (
+        <div className="space-y-2 pt-1">
+          <div
+            ref={mapContainerRef}
+            className={cn(
+              "w-full overflow-hidden rounded-xl ring-1 ring-black/10",
+              adjustMode && "ring-2 ring-brand-yellow"
+            )}
+            style={{ height: MAP_HEIGHT_PX }}
+            role="img"
+            aria-label={
+              adjustMode
+                ? "מפה לכיוון מיקום — גררו את הסיכה או לחצו על המפה"
+                : "תצוגת מפה של הכתובת שנבחרה"
+            }
+          />
+
+          {adjustMode ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <p className="flex-1 text-xs text-brand-muted">
+                גררו את הסיכה או לחצו על המפה למיקום מדויק
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={confirmLoading || disabled}
+                  onClick={cancelAdjustMode}
+                  className="h-10 flex-1 sm:flex-none"
+                >
+                  ביטול
+                </Button>
+                <Button
+                  type="button"
+                  disabled={confirmLoading || disabled}
+                  onClick={confirmAdjustedPin}
+                  className="h-10 flex-1 bg-brand-yellow font-bold text-brand-dark hover:bg-brand-yellowHover sm:flex-none sm:px-5"
+                >
+                  {confirmLoading ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" />
+                      מעדכנים כתובת...
+                    </>
+                  ) : (
+                    "אישור מיקום"
+                  )}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={startAdjustMode}
+              className="text-sm font-semibold text-brand-muted underline-offset-2 hover:text-brand-dark hover:underline disabled:opacity-50"
+            >
+              התאמת מיקום מדויק על המפה
+            </button>
+          )}
+        </div>
       )}
 
       {checkServiceArea && checkingService && (

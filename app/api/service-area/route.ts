@@ -4,7 +4,17 @@ import { isActiveServiceArea } from "@/lib/orders/server";
 
 const bodySchema = z.object({
   city_name: z.string().trim().min(1),
-  city_candidates: z.array(z.string().trim().min(1)).optional(),
+  city_candidates: z
+    .array(
+      z.union([
+        z.string().trim().min(1),
+        z.object({
+          name: z.string().trim().min(1),
+          source: z.string().trim().min(1),
+        }),
+      ])
+    )
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -18,7 +28,9 @@ export async function POST(request: Request) {
 
     const { available, matchedCity } = await isActiveServiceArea(
       parsed.data.city_name,
-      parsed.data.city_candidates ?? []
+      (parsed.data.city_candidates ?? []) as Array<
+        string | { name: string; source: string }
+      >
     );
 
     return NextResponse.json({

@@ -26,6 +26,7 @@ import {
   type OrderFormValues,
 } from "@/lib/validations/order";
 import { cn } from "@/lib/utils";
+import type { CityCandidate } from "@/lib/geo";
 
 type PricingState = {
   distance_km: number | null;
@@ -49,12 +50,12 @@ export function OrderForm() {
   const [pricingLoading, setPricingLoading] = useState(false);
   const [pickupCity, setPickupCity] = useState<string | null>(null);
   const [dropoffCity, setDropoffCity] = useState<string | null>(null);
-  const [pickupCityCandidates, setPickupCityCandidates] = useState<string[]>(
-    []
-  );
-  const [dropoffCityCandidates, setDropoffCityCandidates] = useState<string[]>(
-    []
-  );
+  const [pickupCityCandidates, setPickupCityCandidates] = useState<
+    CityCandidate[]
+  >([]);
+  const [dropoffCityCandidates, setDropoffCityCandidates] = useState<
+    CityCandidate[]
+  >([]);
 
   const form = useForm<OrderFormValues>({
     resolver: zodResolver(orderFormSchema),
@@ -103,7 +104,7 @@ export function OrderForm() {
     pickupServiceAvailable === true && dropoffServiceAvailable === true;
 
   const checkPickupServiceArea = useCallback(
-    async (city: string, candidates: string[] = []) => {
+    async (city: string, candidates: CityCandidate[] = []) => {
       setCheckingPickupService(true);
       setPickupServiceAvailable(null);
       try {
@@ -142,7 +143,7 @@ export function OrderForm() {
   );
 
   const checkDropoffServiceArea = useCallback(
-    async (city: string, candidates: string[] = []) => {
+    async (city: string, candidates: CityCandidate[] = []) => {
       setCheckingDropoffService(true);
       setDropoffServiceAvailable(null);
       try {
